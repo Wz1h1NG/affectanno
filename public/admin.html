@@ -9,7 +9,7 @@
         --ok:#2ecc8f;--bad:#ff6b81;--accent:#6c8cff;}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-  header{position:sticky;top:0;z-index:10;background:rgba(11,16,32,.9);backdrop-filter:blur(10px);
+  header{position:sticky;top:0;z-index:20;background:rgba(11,16,32,.9);backdrop-filter:blur(10px);
          border-bottom:1px solid var(--line);padding:12px 20px;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
   h1{font-size:17px;margin:0;letter-spacing:.3px}
   .stat{color:var(--dim);font-size:13px}
@@ -25,9 +25,13 @@
          padding:7px 12px;font-size:13px;cursor:pointer}
   button:hover{border-color:var(--accent)}
   button.primary{background:linear-gradient(180deg,#7b96ff,#5c7bf0);border:0;color:#fff;font-weight:600}
-  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}
+  table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card)}
   th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:13px}
-  th{background:#1b2338;color:var(--dim);font-weight:600;position:sticky;top:60px;font-size:12px;letter-spacing:.3px}
+  th{background:#1b2338;color:var(--dim);font-weight:600;position:sticky;top:var(--hdr,60px);z-index:5;font-size:12px;letter-spacing:.3px;border-bottom:1px solid var(--line)}
+  thead th:first-child{border-top-left-radius:12px}
+  thead th:last-child{border-top-right-radius:12px}
+  tbody tr:last-child td:first-child{border-bottom-left-radius:12px}
+  tbody tr:last-child td:last-child{border-bottom-right-radius:12px}
   tr:hover td{background:#1a2237}
   .v-ok{color:var(--ok);font-weight:600}
   .v-bad{color:var(--bad);font-weight:600}
@@ -86,6 +90,14 @@
 <script>
 (function () {
   const code = new URLSearchParams(location.search).get('code') || '';
+  // 顶栏高度随换行变化，量出来给表头吸顶用，避免表头被顶栏压住
+  const syncHdr = () => {
+    const h = document.querySelector('header');
+    if (h) document.documentElement.style.setProperty('--hdr', h.offsetHeight + 'px');
+  };
+  window.addEventListener('resize', syncHdr);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(syncHdr);
+  syncHdr();
   const $ = id => document.getElementById(id);
   let all = [];
 
@@ -159,6 +171,7 @@
   }
 
   ['fAnno', 'fVerdict', 'fEmotion'].forEach(id => $(id).addEventListener('change', render));
+  window.addEventListener('load', syncHdr);
   $('fAbnormal').addEventListener('change', render);
   $('fSearch').addEventListener('input', render);
   $('refresh').addEventListener('click', load);
