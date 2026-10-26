@@ -161,7 +161,7 @@
     </div>
 
     <footer>
-      <span><kbd>1</kbd> 正确</span>
+      <span><kbd>1</kbd> 正确（点一下直接下一张）</span>
       <span><kbd>2</kbd> 不正确</span>
       <span><kbd>Enter</kbd> 提交</span>
       <span><kbd>S</kbd> 跳过这张</span>
@@ -182,7 +182,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = {item: null, started: 0, mode: null, stats: null};
+  const state = {item: null, started: 0, mode: null, stats: null, busy: false};
   let me = '';
 
   const api = async (url, opt) => {
@@ -272,7 +272,7 @@
   }
 
   async function submit(verdict) {
-    if (!state.item) return;
+    if (!state.item || state.busy) return;
     const payload = {
       item_id: state.item.id,
       verdict,
@@ -286,6 +286,7 @@
         $('newPrompt').focus(); return;
       }
     }
+    state.busy = true;
     $('btnSubmit').disabled = true;
     try {
       const d = await api('/api/label', {
@@ -298,6 +299,7 @@
       if (String(ex.message).includes('已由')) { toast(ex.message, 2200); await loadNext(); }
       else toast('提交失败：' + ex.message, 2600);
     } finally {
+      state.busy = false;
       $('btnSubmit').disabled = false;
     }
   }
@@ -314,7 +316,8 @@
     } catch (ex) { toast('跳过失败：' + ex.message); }
   }
 
-  $('btnOk').onclick = () => setMode('ok');
+  // 点「表达正确」= 直接提交并跳下一张（不用再按回车）
+  $('btnOk').onclick = () => submit('ok');
   $('btnBad').onclick = () => setMode('bad');
   $('btnSubmit').onclick = () => submit('bad');
 
@@ -334,11 +337,10 @@
       if (ev.key === 'Escape') { $('fix').classList.remove('show'); }
       return;
     }
-    if (ev.key === '1') { setMode('ok'); }
+    if (ev.key === '1') { submit('ok'); }
     else if (ev.key === '2') { setMode('bad'); }
     else if (ev.key === 'Enter') {
       if (state.mode === 'bad') submit('bad');
-      else if (state.mode === 'ok') submit('ok');
     }
     else if (ev.key === 's' || ev.key === 'S') skip();
     else if (ev.key === 'Escape') $('zoom').classList.remove('show');

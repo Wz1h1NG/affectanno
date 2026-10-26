@@ -209,8 +209,8 @@ export default {
       return json({ ok: true }, 200, { "Set-Cookie": "anno=; Path=/; Max-Age=0" });
     }
 
-    /* ---------- 以下需要登录 ---------- */
-    if (!name) return json({ error: "login" }, 401);
+    /* ---------- 以下需要登录（导出只需管理员口令，和旧版一致） ---------- */
+    if (!name && p !== "/export.csv") return json({ error: "login" }, 401);
 
     if (method === "GET" && p === "/api/next") {
       const row = await claimNext(env, name);
@@ -277,15 +277,18 @@ export default {
       const admin = (await cfg(env, "admin_code")) || "";
       if (!code || code !== admin) return json({ error: "need admin code" }, 403);
       const rows = (await env.DB.prepare(`
-        SELECT i.id,i.subset,i.emotion,i.origin_id,i.prompt,
+        SELECT i.id,i.subset,i.emotion,i.origin_id,i.prompt,i.origin_asset,i.edited_asset,
                l.annotator,l.verdict,l.new_prompt,l.note,l.ms,l.created_at
         FROM labels l JOIN items i ON i.id=l.item_id ORDER BY i.id`).all()).results || [];
       const esc = (v) => {
         const s = v === null || v === undefined ? "" : String(v);
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
       };
+      // 导出用北京时间（UTC+8），和旧版一致
+      const bjTime = (ts) => new Date((ts || 0) * 1000 + 8 * 3600 * 1000)
+        .toISOString().replace("T", " ").slice(0, 19);
       const head = ["item_id", "subset", "emotion", "origin_id", "origin_prompt", "verdict",
-        "new_prompt", "note", "annotator", "seconds", "created_at"];
+        "new_prompt", "note", "annotator", "seconds", "created_at", "origin_path", "edited_path"];
       const lines = [head.join(",")];
       for (const r of rows) {
         lines.push([
@@ -293,7 +296,8 @@ export default {
           r.verdict === "ok" ? "正确" : "不正确",
           r.new_prompt || "", r.note || "", r.annotator,
           ((r.ms || 0) / 1000).toFixed(1),
-          new Date((r.created_at || 0) * 1000).toISOString().replace("T", " ").slice(0, 19),
+          bjTime(r.created_at),
+          r.origin_asset || "", r.edited_asset || "",
         ].map(esc).join(","));
       }
       return new Response("\ufeff" + lines.join("\n"), {
