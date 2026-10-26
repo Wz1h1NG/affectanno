@@ -116,6 +116,8 @@ function itemJson(row) {
 
 async function claimNext(env, name) {
   const now = Date.now() / 1000;
+  // 先清掉过期租约：否则 ON CONFLICT DO NOTHING 会让这一题谁也抢不到（取题卡死的根因）
+  await env.DB.prepare("DELETE FROM claims WHERE expires <= ?").bind(now).run();
   for (let attempt = 0; attempt < 4; attempt++) {
     const cand = await env.DB.prepare(`
       SELECT i.* FROM items i
@@ -127,8 +129,9 @@ async function claimNext(env, name) {
     if (!cand) return null;
     await env.DB.prepare(
       "INSERT INTO claims(item_id,annotator,expires) VALUES(?,?,?) " +
-      "ON CONFLICT(item_id) DO NOTHING"
-    ).bind(cand.id, name, now + CLAIM_TTL).run();
+      "ON CONFLICT(item_id) DO UPDATE SET annotator=excluded.annotator, expires=excluded.expires " +
+      "WHERE claims.expires <= ?"
+    ).bind(cand.id, name, now + CLAIM_TTL, now).run();
     const mine = await env.DB.prepare(
       "SELECT item_id FROM claims WHERE item_id=? AND annotator=?"
     ).bind(cand.id, name).first();
