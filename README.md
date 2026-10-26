@@ -27,6 +27,21 @@
 | GET | `/api/stats` | 进度与按人统计 |
 | GET | `/img?item=&v=origin\|edit` | 图片（需登录） |
 | GET | `/export.csv?code=<admin>` | 导出全部标注 |
+| GET | `/admin?code=<admin>` | **结果查看页**（表格 + 缩略图 + 筛选） |
+| GET | `/api/results?code=<admin>` | 结果 JSON（供查看页使用） |
+| GET | `/admin/img?code=<admin>&item=&v=` | 查看页用的图片（走管理员口令，不要求登录） |
+
+## 结果查看页
+
+`https://<域名>/admin?code=<导出口令>`
+
+- 实时表格：时间、样本号、标注员、子集/情绪、判定、用时、原 prompt、新 prompt、备注
+- 每行显示原图 + 编辑图缩略图，点击放大
+- 筛选：按标注员 / 判定 / 情绪、「只看异常」（用时 < 10 秒 或 新 prompt 未改）、关键词搜索
+- 右上角一键导出 CSV
+- 口令即 `config.admin_code`，与导出 CSV 同一个
+
+`public/admin.html` 本身不直接对外（`/admin.html` 返回 404），只能通过带口令的 `/admin` 进入。
 
 ## 数据结构
 

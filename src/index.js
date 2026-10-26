@@ -209,6 +209,40 @@ export default {
       return json({ ok: true }, 200, { "Set-Cookie": "anno=; Path=/; Max-Age=0" });
     }
 
+    /* ---------- 结果查看页：只需管理员口令 ---------- */
+    if (p === "/admin" || p === "/api/results" || p === "/admin/img") {
+      const code = url.searchParams.get("code") || "";
+      const admin = (await cfg(env, "admin_code")) || "";
+      if (!code || code !== admin) return json({ error: "need admin code" }, 403);
+
+      if (p === "/admin") return env.ASSETS.fetch(new URL("/admin.html", url.origin));
+
+      if (p === "/api/results") {
+        const rows = (await env.DB.prepare(`
+          SELECT l.item_id, l.annotator, l.verdict, l.new_prompt, l.note, l.ms, l.created_at,
+                 i.subset, i.emotion, i.origin_id, i.prompt
+          FROM labels l JOIN items i ON i.id = l.item_id
+          ORDER BY l.created_at DESC`).all()).results || [];
+        return json({ stats: await stats(env), rows });
+      }
+
+      // /admin/img
+      const id = parseInt(url.searchParams.get("item") || "0", 10);
+      const v = url.searchParams.get("v") === "origin" ? "origin" : "edit";
+      const row = await env.DB.prepare(
+        "SELECT origin_asset, edited_asset FROM items WHERE id=?").bind(id).first();
+      if (!row) return json({ error: "no item" }, 404);
+      const asset = v === "origin" ? row.origin_asset : row.edited_asset;
+      if (!asset) return json({ error: "no image" }, 404);
+      const res = await env.ASSETS.fetch(new URL("/" + asset, url.origin));
+      const h = new Headers(res.headers);
+      h.set("Cache-Control", "private, max-age=3600");
+      return new Response(res.body, { status: res.status, headers: h });
+    }
+
+    // 结果页模板本身不对外暴露
+    if (p === "/admin.html") return json({ error: "not found" }, 404);
+
     /* ---------- 以下需要登录（导出只需管理员口令，和旧版一致） ---------- */
     if (!name && p !== "/export.csv") return json({ error: "login" }, 401);
 

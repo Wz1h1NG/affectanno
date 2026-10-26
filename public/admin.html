@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>标注结果 · EmoEdit</title>
+<style>
+  :root{--bg:#0b1020;--card:#151c30;--line:#2a3450;--fg:#e9edf9;--dim:#96a0be;
+        --ok:#2ecc8f;--bad:#ff6b81;--accent:#6c8cff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  header{position:sticky;top:0;z-index:10;background:rgba(11,16,32,.9);backdrop-filter:blur(10px);
+         border-bottom:1px solid var(--line);padding:12px 20px;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  h1{font-size:17px;margin:0;letter-spacing:.3px}
+  .stat{color:var(--dim);font-size:13px}
+  .stat b{color:var(--fg)}
+  .chip{display:inline-flex;gap:6px;align-items:center;padding:3px 9px;border-radius:99px;
+        background:var(--card);border:1px solid var(--line);font-size:12px;margin-right:6px}
+  main{padding:16px 20px 60px}
+  .filters{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}
+  input,select{background:var(--card);border:1px solid var(--line);color:var(--fg);
+               border-radius:9px;padding:7px 10px;font-size:13px;outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  button{background:var(--card);border:1px solid var(--line);color:var(--fg);border-radius:9px;
+         padding:7px 12px;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:linear-gradient(180deg,#7b96ff,#5c7bf0);border:0;color:#fff;font-weight:600}
+  table{width:100%;border-collapse:collapse;background:var(--card);border-radius:12px;overflow:hidden}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;font-size:13px}
+  th{background:#1b2338;color:var(--dim);font-weight:600;position:sticky;top:60px;font-size:12px;letter-spacing:.3px}
+  tr:hover td{background:#1a2237}
+  .v-ok{color:var(--ok);font-weight:600}
+  .v-bad{color:var(--bad);font-weight:600}
+  .num{color:var(--dim);font-variant-numeric:tabular-nums}
+  .slow{color:#ffb3bf}
+  .prompt{color:#ffd479;font-family:ui-monospace,Consolas,monospace;font-size:12px;word-break:break-word;max-width:260px}
+  .note{color:var(--dim);font-size:12px;max-width:200px}
+  .thumbs{display:flex;gap:6px}
+  .thumbs img{width:64px;height:64px;object-fit:cover;border-radius:7px;cursor:zoom-in;border:1px solid var(--line)}
+  .empty{text-align:center;color:var(--dim);padding:60px 0}
+  #zoom{position:fixed;inset:0;background:rgba(5,8,16,.95);display:none;place-items:center;z-index:50;cursor:zoom-out}
+  #zoom.show{display:grid}
+  #zoom img{max-width:94vw;max-height:92vh;border-radius:10px}
+  .warn{color:#ffb3bf}
+</style>
+</head>
+<body>
+<header>
+  <h1>标注结果</h1>
+  <div class="stat">已标 <b id="done">–</b> / <b id="total">–</b></div>
+  <div id="per" class="stat"></div>
+  <div style="flex:1"></div>
+  <button id="refresh">刷新</button>
+  <button class="primary" id="export">导出 CSV</button>
+</header>
+
+<main>
+  <div class="filters">
+    <select id="fAnno"><option value="">全部标注员</option></select>
+    <select id="fVerdict">
+      <option value="">全部判定</option>
+      <option value="ok">正确</option>
+      <option value="bad">不正确</option>
+    </select>
+    <select id="fEmotion"><option value="">全部情绪</option></select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dim)">
+      <input type="checkbox" id="fAbnormal"> 只看异常（用时 &lt; 10 秒 或 prompt 未改）
+    </label>
+    <input id="fSearch" placeholder="搜索 id / prompt / 备注" style="min-width:220px">
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>时间</th><th>#</th><th>标注员</th><th>子集 / 情绪</th><th>判定</th><th>用时</th>
+        <th>原 prompt</th><th>新 prompt</th><th>备注</th><th>图（原 / 改）</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty" style="display:none">没有符合条件的记录</div>
+</main>
+
+<div id="zoom"><img id="zoomImg" alt=""></div>
+
+<script>
+(function () {
+  const code = new URLSearchParams(location.search).get('code') || '';
+  const $ = id => document.getElementById(id);
+  let all = [];
+
+  const fmtTime = ts => {
+    const d = new Date((ts + 8 * 3600) * 1000);
+    const p = n => String(n).padStart(2, '0');
+    return `${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+  };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  async function load() {
+    const r = await fetch('/api/results?code=' + encodeURIComponent(code), {cache: 'no-store'});
+    if (!r.ok) { document.body.innerHTML = '<p style="padding:40px">口令不对或没有权限</p>'; return; }
+    const d = await r.json();
+    all = d.rows;
+    $('done').textContent = d.stats.done;
+    $('total').textContent = d.stats.total;
+    $('per').innerHTML = d.stats.per.map(p =>
+      `<span class="chip">${esc(p.annotator)} <b>${p.c}</b> 条</span>`).join('');
+
+    const annos = [...new Set(all.map(x => x.annotator))];
+    $('fAnno').innerHTML = '<option value="">全部标注员</option>' +
+      annos.map(a => `<option>${esc(a)}</option>`).join('');
+    const emos = [...new Set(all.map(x => x.emotion))];
+    $('fEmotion').innerHTML = '<option value="">全部情绪</option>' +
+      emos.map(e => `<option>${esc(e)}</option>`).join('');
+    render();
+  }
+
+  function isAbnormal(r) {
+    const np = (r.new_prompt || '').trim();
+    const op = (r.prompt || '').trim();
+    return (r.ms || 0) < 10000 || (r.verdict === 'bad' && np === op);
+  }
+
+  function render() {
+    const a = $('fAnno').value, v = $('fVerdict').value, e = $('fEmotion').value;
+    const ab = $('fAbnormal').checked, q = $('fSearch').value.trim().toLowerCase();
+    const rows = all.filter(r => {
+      if (a && r.annotator !== a) return false;
+      if (v && r.verdict !== v) return false;
+      if (e && r.emotion !== e) return false;
+      if (ab && !isAbnormal(r)) return false;
+      if (q) {
+        const hay = [r.item_id, r.prompt, r.new_prompt, r.note, r.annotator].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    $('empty').style.display = rows.length ? 'none' : 'block';
+    $('rows').innerHTML = rows.map(r => {
+      const ok = r.verdict === 'ok';
+      const secs = ((r.ms || 0) / 1000).toFixed(0);
+      return `<tr>
+        <td class="num">${fmtTime(r.created_at)}</td>
+        <td class="num">${r.item_id}</td>
+        <td>${esc(r.annotator)}</td>
+        <td class="num">${esc(r.subset)}/${esc(r.emotion)}</td>
+        <td class="${ok ? 'v-ok' : 'v-bad'}">${ok ? '正确' : '不正确'}</td>
+        <td class="num ${secs < 10 ? 'slow' : ''}">${secs}s</td>
+        <td class="prompt">${esc(r.prompt)}</td>
+        <td class="prompt">${esc(r.new_prompt) || '—'}</td>
+        <td class="note">${esc(r.note) || '—'}</td>
+        <td><div class="thumbs">
+          <img loading="lazy" src="/admin/img?code=${encodeURIComponent(code)}&item=${r.item_id}&v=origin" alt="原图">
+          <img loading="lazy" src="/admin/img?code=${encodeURIComponent(code)}&item=${r.item_id}&v=edit" alt="改图">
+        </div></td>
+      </tr>`;
+    }).join('');
+  }
+
+  ['fAnno', 'fVerdict', 'fEmotion'].forEach(id => $(id).addEventListener('change', render));
+  $('fAbnormal').addEventListener('change', render);
+  $('fSearch').addEventListener('input', render);
+  $('refresh').addEventListener('click', load);
+  $('export').addEventListener('click', () => {
+    location.href = '/export.csv?code=' + encodeURIComponent(code);
+  });
+
+  document.addEventListener('click', ev => {
+    if (ev.target.tagName === 'IMG' && ev.target.closest('.thumbs')) {
+      $('zoomImg').src = ev.target.src;
+      $('zoom').classList.add('show');
+    } else if (ev.target.id === 'zoom') {
+      $('zoom').classList.remove('show');
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
