@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EmoEdit 情感标注 · 登录</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#141a2e; --card:#1b2238; --line:#2b3350;
+    --fg:#e8ecf7; --dim:#98a2c0; --accent:#6c8cff; --ok:#2ecc8f; --bad:#ff6b81;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; display:grid; place-items:center; padding:24px;
+    background:radial-gradient(1200px 600px at 20% 0%, #1a2350 0%, var(--bg) 55%) fixed;
+    color:var(--fg); font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  .card{
+    width:100%; max-width:390px; background:var(--card); border:1px solid var(--line);
+    border-radius:18px; padding:30px 26px 24px; box-shadow:0 24px 60px rgba(0,0,0,.45);
+  }
+  h1{margin:0 0 4px; font-size:21px; letter-spacing:.3px}
+  .sub{margin:0 0 22px; color:var(--dim); font-size:13px}
+  label{display:block; font-size:12px; color:var(--dim); margin:14px 0 6px; letter-spacing:.4px}
+  input{
+    width:100%; padding:11px 13px; border-radius:11px; border:1px solid var(--line);
+    background:#0f1526; color:var(--fg); font-size:15px; outline:none;
+  }
+  input:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(108,140,255,.18)}
+  button{
+    width:100%; margin-top:20px; padding:12px; border:0; border-radius:11px; cursor:pointer;
+    background:linear-gradient(180deg,#7b96ff,#5c7bf0); color:#fff; font-size:15px; font-weight:600;
+    letter-spacing:.5px;
+  }
+  button:disabled{opacity:.6; cursor:default}
+  .err{min-height:20px; margin-top:12px; color:var(--bad); font-size:13px}
+  .hint{margin-top:16px; color:#6b7694; font-size:12px; text-align:center}
+</style>
+</head>
+<body>
+<form class="card" id="f" autocomplete="off">
+  <h1>EmoEdit 情感标注</h1>
+  <p class="sub">判断编辑后的图像是否准确表达了目标情绪</p>
+
+  <label for="code">访问口令</label>
+  <input id="code" name="code" placeholder="EMO-XXXX" required autocapitalize="characters">
+
+  <label for="name">你的名字（用于统计与导出）</label>
+  <input id="name" name="name" placeholder="例如：小王" required maxlength="24">
+
+  <button id="go" type="submit">进入标注</button>
+  <div class="err" id="err"></div>
+  <div class="hint">同一份数据每人只标一次，标完自动跳到下一张</div>
+</form>
+
+<script>
+const f = document.getElementById('f'), err = document.getElementById('err'), go = document.getElementById('go');
+const saved = localStorage.getItem('anno_name');
+if (saved) document.getElementById('name').value = saved;
+
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  err.textContent = ''; go.disabled = true; go.textContent = '登录中…';
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: document.getElementById('code').value.trim(),
+                            name: document.getElementById('name').value.trim()})
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || '登录失败');
+    localStorage.setItem('anno_name', d.me);
+    location.href = '/';
+  } catch (ex) {
+    err.textContent = ex.message; go.disabled = false; go.textContent = '进入标注';
+  }
+});
+</script>
+</body>
+</html>

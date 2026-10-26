@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EmoEdit 情感标注</title>
+<style>
+  :root{
+    --bg:#0b1020; --card:#151c30; --card2:#1b2338; --line:#2a3450;
+    --fg:#e9edf9; --dim:#96a0be; --accent:#6c8cff;
+    --ok:#2ecc8f; --ok-bg:rgba(46,204,143,.14);
+    --bad:#ff6b81; --bad-bg:rgba(255,107,129,.14);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; color:var(--fg);
+    background:radial-gradient(1000px 500px at 15% -10%, #1b2450 0%, var(--bg) 60%) fixed;
+    font:15px/1.6 -apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  header{
+    position:sticky; top:0; z-index:20; display:flex; align-items:center; gap:18px;
+    padding:10px 20px; background:rgba(11,16,32,.82); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .brand{font-weight:700; letter-spacing:.4px; white-space:nowrap}
+  .brand span{color:var(--accent)}
+  .bar{flex:1; height:7px; background:#1d2440; border-radius:99px; overflow:hidden; min-width:80px}
+  .bar>i{display:block; height:100%; width:0%; background:linear-gradient(90deg,#5c7bf0,#2ecc8f); transition:width .35s}
+  .counts{font-size:13px; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums}
+  .who{font-size:13px; color:var(--dim); white-space:nowrap}
+  .who b{color:var(--fg); font-weight:600}
+  .ghost{
+    background:transparent; border:1px solid var(--line); color:var(--dim); border-radius:9px;
+    padding:5px 10px; font-size:12px; cursor:pointer;
+  }
+  .ghost:hover{color:var(--fg); border-color:#3d4a70}
+
+  main{max-width:1180px; margin:0 auto; padding:18px 18px 40px}
+  .meta{display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:12px}
+  .chip{
+    display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border-radius:99px;
+    background:var(--card2); border:1px solid var(--line); font-size:13px;
+  }
+  .chip.emo{background:rgba(108,140,255,.14); border-color:rgba(108,140,255,.4); font-weight:600}
+  .chip.dim{color:var(--dim)}
+
+  .promptbox{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:10px 13px; margin-bottom:14px; font-size:14px;
+  }
+  .promptbox .k{color:var(--dim); font-size:12px; margin-right:8px}
+  .promptbox code{color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:13.5px; word-break:break-word}
+
+  .stage{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  @media (max-width:820px){ .stage{grid-template-columns:1fr} }
+  figure{
+    margin:0; background:var(--card); border:1px solid var(--line); border-radius:14px;
+    overflow:hidden; position:relative;
+  }
+  figure>figcaption{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:8px 12px; font-size:12.5px; color:var(--dim); border-bottom:1px solid var(--line);
+  }
+  figure.target>figcaption{color:#cdd7ff}
+  .imgwrap{background:#0a0e1a; display:grid; place-items:center; height:min(58vh,540px)}
+  .imgwrap img{max-width:100%; max-height:100%; object-fit:contain; cursor:zoom-in; display:block}
+  .skeleton{width:100%; height:100%; display:grid; place-items:center; color:#3f4a6b; font-size:13px}
+
+  .ask{margin:20px 0 8px; font-size:16px}
+  .ask b{color:#fff}
+  .actions{display:flex; gap:12px; flex-wrap:wrap}
+  .btn{
+    flex:1; min-width:180px; padding:15px 18px; border-radius:14px; cursor:pointer;
+    border:1px solid var(--line); background:var(--card); color:var(--fg);
+    font-size:16px; font-weight:600; letter-spacing:.3px; transition:.16s;
+  }
+  .btn .k{font-size:12px; color:var(--dim); font-weight:500; margin-left:6px}
+  .btn.ok:hover,.btn.ok.active{background:var(--ok-bg); border-color:var(--ok); color:#8ff0c6}
+  .btn.bad:hover,.btn.bad.active{background:var(--bad-bg); border-color:var(--bad); color:#ffb3bf}
+  .btn:disabled{opacity:.45; cursor:default}
+
+  .fix{margin-top:14px; display:none}
+  .fix.show{display:block}
+  .fix label{display:block; font-size:12.5px; color:var(--dim); margin:10px 0 6px}
+  textarea{
+    width:100%; min-height:84px; resize:vertical; padding:11px 13px; border-radius:11px;
+    border:1px solid var(--line); background:#0f1526; color:var(--fg); font:14px/1.55 inherit; outline:none;
+  }
+  textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(108,140,255,.16)}
+  .fixrow{display:flex; gap:10px; align-items:center; margin-top:10px}
+  .fixrow .btn{flex:0 0 auto; min-width:140px; padding:11px 16px; font-size:15px}
+  .tip{color:#6b7694; font-size:12px}
+
+  footer{margin-top:22px; color:#5d688a; font-size:12px; display:flex; gap:16px; flex-wrap:wrap}
+  kbd{background:#1d2440; border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 6px; font-size:11px; color:#b9c3dd}
+
+  #toast{
+    position:fixed; left:50%; bottom:28px; transform:translate(-50%,20px); opacity:0;
+    background:#202a45; border:1px solid #3a4670; color:#e9edf9; padding:10px 18px; border-radius:12px;
+    font-size:14px; transition:.25s; pointer-events:none; z-index:60; box-shadow:0 12px 30px rgba(0,0,0,.4);
+  }
+  #toast.show{opacity:1; transform:translate(-50%,0)}
+
+  #zoom{
+    position:fixed; inset:0; background:rgba(5,8,16,.94); display:none; place-items:center; z-index:80; padding:20px;
+    cursor:zoom-out;
+  }
+  #zoom.show{display:grid}
+  #zoom img{max-width:96vw; max-height:92vh; object-fit:contain; border-radius:10px}
+
+  .done{display:none; text-align:center; padding:70px 20px}
+  .done.show{display:block}
+  .done h2{font-size:24px; margin:0 0 8px}
+  .done p{color:var(--dim)}
+  .done .big{font-size:44px; margin-bottom:10px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">EmoEdit <span>标注台</span></div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="counts" id="counts">– / –</div>
+  <div class="who">标注员 <b id="me">…</b></div>
+  <button class="ghost" id="exportBtn">导出 CSV</button>
+  <button class="ghost" id="outBtn">换人</button>
+</header>
+
+<main>
+  <div id="view">
+    <div class="meta" id="meta"></div>
+    <div class="promptbox"><span class="k">原始 prompt</span><code id="prompt"></code></div>
+
+    <div class="stage">
+      <figure>
+        <figcaption><span>原图</span><span id="oid"></span></figcaption>
+        <div class="imgwrap"><div class="skeleton" id="sk1">加载中…</div><img id="imgO" alt="原图" hidden></div>
+      </figure>
+      <figure class="target">
+        <figcaption><span>编辑后（待判断）</span><span id="sid"></span></figcaption>
+        <div class="imgwrap"><div class="skeleton" id="sk2">加载中…</div><img id="imgE" alt="编辑图" hidden></div>
+      </figure>
+    </div>
+
+    <p class="ask">这张<b>编辑后的图</b>，是否准确表达出目标情绪 <b id="targetEmo"></b>？</p>
+
+    <div class="actions">
+      <button class="btn ok" id="btnOk">✅ 表达正确 <span class="k">1</span></button>
+      <button class="btn bad" id="btnBad">❌ 不正确，需改 prompt <span class="k">2</span></button>
+    </div>
+
+    <div class="fix" id="fix">
+      <label for="newPrompt">写出更合适的 prompt（会收集起来用于重生成）</label>
+      <textarea id="newPrompt" placeholder="例如：make the sky glow with warm sunset colors, people cheering"></textarea>
+      <label for="note">备注（可选）</label>
+      <textarea id="note" style="min-height:52px" placeholder="哪里不对？比如情绪不够、构图变了、物体崩了"></textarea>
+      <div class="fixrow">
+        <button class="btn ok" id="btnSubmit">提交并下一张 <span class="k">Enter</span></button>
+        <span class="tip" id="fixTip">直接回车提交；Esc 取消</span>
+      </div>
+    </div>
+
+    <footer>
+      <span><kbd>1</kbd> 正确</span>
+      <span><kbd>2</kbd> 不正确</span>
+      <span><kbd>Enter</kbd> 提交</span>
+      <span><kbd>S</kbd> 跳过这张</span>
+      <span>点图片可放大</span>
+    </footer>
+  </div>
+
+  <div class="done" id="done">
+    <div class="big">🎉</div>
+    <h2>当前没有待标注的样本了</h2>
+    <p id="doneMsg"></p>
+  </div>
+</main>
+
+<div id="toast"></div>
+<div id="zoom"><img id="zoomImg" alt=""></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const state = {item: null, started: 0, mode: null, stats: null};
+  let me = '';
+
+  const api = async (url, opt) => {
+    const r = await fetch(url, opt);
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401) { location.href = '/login'; throw new Error('login'); }
+    if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+    return d;
+  };
+
+  const toast = (msg, ms = 1800) => {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), ms);
+  };
+
+  const fmt = n => (n === null || n === undefined) ? '–' : n;
+
+  function paintStats(st) {
+    if (!st) return;
+    state.stats = st;
+    const pct = st.total ? Math.round(st.done * 100 / st.total) : 0;
+    $('bar').style.width = pct + '%';
+    $('counts').textContent = `${st.done} / ${st.total}（剩 ${st.remain}）`;
+    $('me').textContent = st.me || me;
+  }
+
+  function resetFiles() {
+    $('sk1').hidden = false; $('sk2').hidden = false;
+    $('imgO').hidden = true; $('imgE').hidden = true;
+    $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
+  }
+
+  function render(item) {
+    state.item = item; state.started = Date.now(); state.mode = null;
+    $('done').classList.remove('show'); $('view').style.display = '';
+    $('fix').classList.remove('show');
+    $('newPrompt').value = ''; $('note').value = '';
+    $('btnOk').classList.remove('active'); $('btnBad').classList.remove('active');
+
+    const emo = `${item.emoji} ${item.emotion}（${item.emo_zh}）`;
+    $('meta').innerHTML = `
+      <span class="chip emo">${item.emoji} ${item.emotion}</span>
+      <span class="chip">${item.emo_zh}</span>
+      <span class="chip dim">${item.subset}</span>
+      <span class="chip dim">id ${item.origin_id}</span>`;
+    $('prompt').textContent = item.prompt || '（无）';
+    $('oid').textContent = item.origin_id;
+    $('sid').textContent = '#' + item.id;
+    $('targetEmo').textContent = `${item.emoji} ${item.emo_zh}`;
+
+    resetFiles();
+    const o = $('imgO'), e = $('imgE');
+    o.onload = () => { o.hidden = false; $('sk1').hidden = true; };
+    e.onload = () => { e.hidden = false; $('sk2').hidden = true; };
+    o.onerror = () => { $('sk1').textContent = '原图加载失败'; };
+    e.onerror = () => { $('sk2').textContent = '编辑图加载失败'; };
+    o.src = `/img?item=${item.id}&v=origin&t=${Date.now()}`;
+    e.src = `/img?item=${item.id}&v=edit&t=${Date.now()}`;
+  }
+
+  async function loadNext() {
+    $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
+    const d = await api('/api/next');
+    me = d.me; paintStats(d.stats);
+    if (!d.item) {
+      $('view').style.display = 'none';
+      $('done').classList.add('show');
+      $('doneMsg').textContent = `全部 ${d.stats.total} 条已完成，共 ${d.stats.done} 条标注。可以点右上角导出 CSV。`;
+      return;
+    }
+    render(d.item);
+  }
+
+  function setMode(mode) {
+    if (!state.item) return;
+    state.mode = mode;
+    $('btnOk').classList.toggle('active', mode === 'ok');
+    $('btnBad').classList.toggle('active', mode === 'bad');
+    if (mode === 'bad') {
+      $('fix').classList.add('show');
+      const np = $('newPrompt');
+      if (!np.value) np.value = state.item.prompt || '';
+      np.focus(); np.select();
+    } else {
+      $('fix').classList.remove('show');
+    }
+  }
+
+  async function submit(verdict) {
+    if (!state.item) return;
+    const payload = {
+      item_id: state.item.id,
+      verdict,
+      new_prompt: verdict === 'bad' ? $('newPrompt').value.trim() : '',
+      note: verdict === 'bad' ? $('note').value.trim() : '',
+      ms: Date.now() - state.started
+    };
+    if (verdict === 'bad' && !payload.new_prompt) { toast('请先写出新的 prompt'); $('newPrompt').focus(); return; }
+    if (verdict === 'bad' && payload.new_prompt === (state.item.prompt || '').trim()) {
+      if (!confirm('新 prompt 和原来的一样，这样收集到的内容和原始 prompt 没区别。确定要这样提交吗？')) {
+        $('newPrompt').focus(); return;
+      }
+    }
+    $('btnSubmit').disabled = true;
+    try {
+      const d = await api('/api/label', {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+      });
+      paintStats(d.stats);
+      toast(verdict === 'ok' ? '已记录：正确' : '已记录：不正确 + 新 prompt', 900);
+      await loadNext();
+    } catch (ex) {
+      if (String(ex.message).includes('已由')) { toast(ex.message, 2200); await loadNext(); }
+      else toast('提交失败：' + ex.message, 2600);
+    } finally {
+      $('btnSubmit').disabled = false;
+    }
+  }
+
+  async function skip() {
+    if (!state.item) return;
+    try {
+      await api('/api/skip', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({item_id: state.item.id})
+      });
+      toast('已跳过');
+      await loadNext();
+    } catch (ex) { toast('跳过失败：' + ex.message); }
+  }
+
+  $('btnOk').onclick = () => setMode('ok');
+  $('btnBad').onclick = () => setMode('bad');
+  $('btnSubmit').onclick = () => submit('bad');
+
+  $('exportBtn').onclick = () => {
+    const code = prompt('输入导出口令（管理员）：');
+    if (!code) return;
+    location.href = '/export.csv?code=' + encodeURIComponent(code);
+  };
+  $('outBtn').onclick = async () => {
+    await fetch('/api/logout', {method: 'POST'});
+    location.href = '/login';
+  };
+
+  document.addEventListener('keydown', ev => {
+    if (ev.target.tagName === 'TEXTAREA' || ev.target.tagName === 'INPUT') {
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submit('bad'); }
+      if (ev.key === 'Escape') { $('fix').classList.remove('show'); }
+      return;
+    }
+    if (ev.key === '1') { setMode('ok'); }
+    else if (ev.key === '2') { setMode('bad'); }
+    else if (ev.key === 'Enter') {
+      if (state.mode === 'bad') submit('bad');
+      else if (state.mode === 'ok') submit('ok');
+    }
+    else if (ev.key === 's' || ev.key === 'S') skip();
+    else if (ev.key === 'Escape') $('zoom').classList.remove('show');
+  });
+
+  ['imgO', 'imgE'].forEach(id => {
+    $(id).onclick = () => { $('zoomImg').src = $(id).src; $('zoom').classList.add('show'); };
+  });
+  $('zoom').onclick = () => $('zoom').classList.remove('show');
+
+  loadNext().catch(e => { if (e.message !== 'login') toast('加载失败：' + e.message, 4000); });
+})();
+</script>
+</body>
+</html>

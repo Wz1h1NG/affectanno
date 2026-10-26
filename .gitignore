@@ -1,0 +1,11 @@
+node_modules/
+public/img/
+seed*.sql
+_*.py
+*.log
+.wrangler/
+.dev.vars
+package-lock.json
+
+seed_via_api.py
+wrangler.worker.jsonc.bak
