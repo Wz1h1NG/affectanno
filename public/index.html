@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>EmoEdit 情感标注</title>
+<title>EmoEdit 视频情感编辑标注</title>
 <style>
   :root{
     --bg:#0b1020; --card:#151c30; --card2:#1b2338; --line:#2a3450;
     --fg:#e9edf9; --dim:#96a0be; --accent:#6c8cff;
     --ok:#2ecc8f; --ok-bg:rgba(46,204,143,.14);
     --bad:#ff6b81; --bad-bg:rgba(255,107,129,.14);
+    --warn:#ffc857;
   }
   *{box-sizing:border-box}
   body{
@@ -49,7 +50,12 @@
     padding:10px 13px; margin-bottom:14px; font-size:14px;
   }
   .promptbox .k{color:var(--dim); font-size:12px; margin-right:8px}
-  .promptbox code{color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:13.5px; word-break:break-word}
+  .promptbox code{
+    display:block; max-height:96px; overflow:auto; margin-top:6px;
+    color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:12.5px;
+    white-space:pre-wrap; word-break:break-word;
+  }
+  .promptbox.expanded code{max-height:none}
 
   .stage{display:grid; grid-template-columns:1fr 1fr; gap:14px}
   @media (max-width:820px){ .stage{grid-template-columns:1fr} }
@@ -62,13 +68,43 @@
     padding:8px 12px; font-size:12.5px; color:var(--dim); border-bottom:1px solid var(--line);
   }
   figure.target>figcaption{color:#cdd7ff}
-  .imgwrap{background:#0a0e1a; display:grid; place-items:center; height:min(58vh,540px)}
-  .imgwrap img{max-width:100%; max-height:100%; object-fit:contain; cursor:zoom-in; display:block}
+  .vidwrap{background:#0a0e1a; display:grid; place-items:center; height:min(50vh,460px)}
+  .vidwrap video{max-width:100%; max-height:100%; display:block; background:#000}
   .skeleton{width:100%; height:100%; display:grid; place-items:center; color:#3f4a6b; font-size:13px}
 
-  .ask{margin:20px 0 8px; font-size:16px}
+  .player{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    margin:14px 0 4px; padding:10px 14px; background:var(--card); border:1px solid var(--line);
+    border-radius:12px;
+  }
+  .pbtn{
+    border:1px solid var(--line); background:var(--card2); color:var(--fg);
+    border-radius:10px; padding:7px 16px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  .pbtn:hover{border-color:var(--accent)}
+  .scrub{flex:1; min-width:160px; accent-color:var(--accent)}
+  .time{font-variant-numeric:tabular-nums; font-size:12.5px; color:var(--dim); min-width:88px}
+  .aud{display:flex; gap:6px; align-items:center; font-size:12.5px; color:var(--dim)}
+  .aud label{display:flex; gap:4px; align-items:center; cursor:pointer}
+
+  .ask{margin:20px 0 10px; font-size:16px}
   .ask b{color:#fff}
-  .actions{display:flex; gap:12px; flex-wrap:wrap}
+
+  .dims{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:6px 14px 12px}
+  .row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:9px 0; border-bottom:1px dashed #232c46}
+  .row:last-child{border-bottom:0}
+  .row>.lab{width:170px; font-size:13.5px; color:#c3cbe2; flex:0 0 auto}
+  .row>.lab i{display:block; font-style:normal; font-size:11.5px; color:#6b7694}
+  .seg{display:flex; gap:6px; flex-wrap:wrap}
+  .seg button{
+    border:1px solid var(--line); background:#111830; color:var(--dim);
+    border-radius:9px; padding:6px 12px; font-size:13px; cursor:pointer; transition:.14s;
+  }
+  .seg button:hover{border-color:#3d4a70; color:var(--fg)}
+  .seg button.on{background:rgba(108,140,255,.2); border-color:var(--accent); color:#dbe4ff; font-weight:600}
+  .seg.hide{display:none}
+
+  .actions{display:flex; gap:12px; flex-wrap:wrap; margin-top:16px}
   .btn{
     flex:1; min-width:180px; padding:15px 18px; border-radius:14px; cursor:pointer;
     border:1px solid var(--line); background:var(--card); color:var(--fg);
@@ -87,8 +123,8 @@
     border:1px solid var(--line); background:#0f1526; color:var(--fg); font:14px/1.55 inherit; outline:none;
   }
   textarea:focus{border-color:var(--accent); box-shadow:0 0 0 3px rgba(108,140,255,.16)}
-  .fixrow{display:flex; gap:10px; align-items:center; margin-top:10px}
-  .fixrow .btn{flex:0 0 auto; min-width:140px; padding:11px 16px; font-size:15px}
+  .fixrow{display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap}
+  .fixrow .btn{flex:0 0 auto; min-width:150px; padding:11px 16px; font-size:15px}
   .tip{color:#6b7694; font-size:12px}
 
   footer{margin-top:22px; color:#5d688a; font-size:12px; display:flex; gap:16px; flex-wrap:wrap}
@@ -101,13 +137,6 @@
   }
   #toast.show{opacity:1; transform:translate(-50%,0)}
 
-  #zoom{
-    position:fixed; inset:0; background:rgba(5,8,16,.94); display:none; place-items:center; z-index:80; padding:20px;
-    cursor:zoom-out;
-  }
-  #zoom.show{display:grid}
-  #zoom img{max-width:96vw; max-height:92vh; object-fit:contain; border-radius:10px}
-
   .done{display:none; text-align:center; padding:70px 20px}
   .done.show{display:block}
   .done h2{font-size:24px; margin:0 0 8px}
@@ -118,7 +147,7 @@
 <body>
 
 <header>
-  <div class="brand">EmoEdit <span>标注台</span></div>
+  <div class="brand">EmoEdit <span>视频标注</span></div>
   <div class="bar"><i id="bar"></i></div>
   <div class="counts" id="counts">– / –</div>
   <div class="who">标注员 <b id="me">…</b></div>
@@ -129,20 +158,78 @@
 <main>
   <div id="view">
     <div class="meta" id="meta"></div>
-    <div class="promptbox"><span class="k">原始 prompt</span><code id="prompt"></code></div>
+    <div class="promptbox" id="promptbox">
+      <span class="k">使用的编辑 prompt</span>
+      <span class="ghost" id="togglePrompt" style="float:right">展开</span>
+      <code id="prompt"></code>
+    </div>
 
     <div class="stage">
       <figure>
-        <figcaption><span>原图</span><span id="oid"></span></figcaption>
-        <div class="imgwrap"><div class="skeleton" id="sk1">加载中…</div><img id="imgO" alt="原图" hidden></div>
+        <figcaption><span>源视频（中性）</span><span id="oid"></span></figcaption>
+        <div class="vidwrap"><div class="skeleton" id="sk1">加载中…</div><video id="vidO" preload="auto" playsinline muted loop hidden></video></div>
       </figure>
       <figure class="target">
         <figcaption><span>编辑后（待判断）</span><span id="sid"></span></figcaption>
-        <div class="imgwrap"><div class="skeleton" id="sk2">加载中…</div><img id="imgE" alt="编辑图" hidden></div>
+        <div class="vidwrap"><div class="skeleton" id="sk2">加载中…</div><video id="vidE" preload="auto" playsinline loop hidden></video></div>
       </figure>
     </div>
 
-    <p class="ask">这张<b>编辑后的图</b>，是否准确表达出目标情绪 <b id="targetEmo"></b>？</p>
+    <div class="player">
+      <button class="pbtn" id="playBtn">▶ 播放</button>
+      <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" step="1">
+      <span class="time" id="time">0.00 / 0.00</span>
+      <span class="aud">
+        <span>声音</span>
+        <label><input type="radio" name="aud" value="edit" checked> 编辑</label>
+        <label><input type="radio" name="aud" value="origin"> 源</label>
+        <label><input type="radio" name="aud" value="none"> 静音</label>
+      </span>
+    </div>
+
+    <p class="ask">这条<b>编辑后的视频</b>，是否准确表达出目标情绪 <b id="targetEmo"></b>，同时保住身份、构图与动作？</p>
+
+    <div class="dims">
+      <div class="row">
+        <div class="lab">情绪可辨识度<i>光看画面能否看出目标情绪</i></div>
+        <div class="seg" data-k="emo_clarity">
+          <button data-v="1">1 看不出</button><button data-v="2">2 偏弱</button>
+          <button data-v="3">3 一般</button><button data-v="4">4 明确</button><button data-v="5">5 一眼看出</button>
+        </div>
+      </div>
+      <div class="row" id="rowIntensity">
+        <div class="lab">强度是否符合档位<i>对照上方「强度」标签</i></div>
+        <div class="seg" data-k="intensity_fit">
+          <button data-v="weaker">偏弱</button><button data-v="good">合适</button><button data-v="stronger">偏强</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lab">身份保持<i>脸、发型、服装是否同一人</i></div>
+        <div class="seg" data-k="identity_keep">
+          <button data-v="1">1 换人了</button><button data-v="2">2 明显变化</button>
+          <button data-v="3">3 一般</button><button data-v="4">4 基本一致</button><button data-v="5">5 完全一致</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lab">构图 / 动作保持<i>机位、景别、姿态、手势时序</i></div>
+        <div class="seg" data-k="comp_keep">
+          <button data-v="1">1 全变了</button><button data-v="2">2 明显变化</button>
+          <button data-v="3">3 一般</button><button data-v="4">4 基本保持</button><button data-v="5">5 完全保持</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="lab">音频一致<i>与源视频声音是否一致</i></div>
+        <div class="seg" data-k="audio_keep">
+          <button data-v="yes">一致</button><button data-v="no">不一致</button><button data-v="na">听不出</button>
+        </div>
+      </div>
+      <div class="row" id="rowTrans">
+        <div class="lab">过渡平滑<i>情绪是否连续渐变、无跳变</i></div>
+        <div class="seg" data-k="trans_smooth">
+          <button data-v="yes">平滑渐变</button><button data-v="no">有跳变</button><button data-v="na">不适用</button>
+        </div>
+      </div>
+    </div>
 
     <div class="actions">
       <button class="btn ok" id="btnOk">✅ 表达正确 <span class="k">1</span></button>
@@ -151,21 +238,22 @@
 
     <div class="fix" id="fix">
       <label for="newPrompt">写出更合适的 prompt（会收集起来用于重生成）</label>
-      <textarea id="newPrompt" placeholder="例如：make the sky glow with warm sunset colors, people cheering"></textarea>
+      <textarea id="newPrompt" placeholder="例如：只让眉毛和嘴角变化，光影保持原样不要加雾"></textarea>
       <label for="note">备注（可选）</label>
-      <textarea id="note" style="min-height:52px" placeholder="哪里不对？比如情绪不够、构图变了、物体崩了"></textarea>
+      <textarea id="note" style="min-height:52px" placeholder="哪里不对？比如情绪不够、构图漂了、身份变了、过渡有跳变"></textarea>
       <div class="fixrow">
-        <button class="btn ok" id="btnSubmit">提交并下一张 <span class="k">Enter</span></button>
-        <span class="tip" id="fixTip">直接回车提交；Esc 取消</span>
+        <button class="btn ok" id="btnSubmit">提交并下一条 <span class="k">Enter</span></button>
+        <span class="tip" id="fixTip">Ctrl/⌘+Enter 提交；Esc 取消</span>
       </div>
     </div>
 
     <footer>
-      <span><kbd>1</kbd> 正确（点一下直接下一张）</span>
+      <span><kbd>Space</kbd> 播放/暂停</span>
+      <span><kbd>1</kbd> 正确</span>
       <span><kbd>2</kbd> 不正确</span>
       <span><kbd>Enter</kbd> 提交</span>
-      <span><kbd>S</kbd> 跳过这张</span>
-      <span>点图片可放大</span>
+      <span><kbd>S</kbd> 跳过</span>
+      <span>两条视频同步播放，可拖动进度条逐帧对照</span>
     </footer>
   </div>
 
@@ -177,12 +265,11 @@
 </main>
 
 <div id="toast"></div>
-<div id="zoom"><img id="zoomImg" alt=""></div>
 
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = {item: null, started: 0, mode: null, stats: null, busy: false};
+  const state = {item: null, started: 0, mode: null, stats: null, dims: {}};
   let me = '';
 
   const api = async (url, opt) => {
@@ -198,8 +285,6 @@
     clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), ms);
   };
 
-  const fmt = n => (n === null || n === undefined) ? '–' : n;
-
   function paintStats(st) {
     if (!st) return;
     state.stats = st;
@@ -209,10 +294,72 @@
     $('me').textContent = st.me || me;
   }
 
-  function resetFiles() {
-    $('sk1').hidden = false; $('sk2').hidden = false;
-    $('imgO').hidden = true; $('imgE').hidden = true;
-    $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
+  /* ---------------- 视频同步 ---------------- */
+  const vO = () => $('vidO'), vE = () => $('vidE');
+
+  function syncSeek(t) {
+    const a = vO(), b = vE();
+    if (a && a.readyState >= 1) a.currentTime = t;
+    if (b && b.readyState >= 1) b.currentTime = t;
+  }
+
+  function playBoth() {
+    const a = vO(), b = vE();
+    if (b) b.play().catch(() => {});
+    if (a) a.play().catch(() => {});
+    $('playBtn').textContent = '⏸ 暂停';
+  }
+
+  function pauseBoth() {
+    const a = vO(), b = vE();
+    if (a) a.pause();
+    if (b) b.pause();
+    $('playBtn').textContent = '▶ 播放';
+  }
+
+  function togglePlay() {
+    const b = vE();
+    if (!b) return;
+    if (b.paused) playBoth(); else pauseBoth();
+  }
+
+  function setAudio(mode) {
+    const a = vO(), b = vE();
+    if (!a || !b) return;
+    a.muted = mode !== 'origin';
+    b.muted = mode !== 'edit';
+  }
+
+  // 以编辑视频为主时钟，源视频跟随
+  function wireVideos() {
+    const a = vO(), b = vE();
+    const onTime = () => {
+      if (!b.duration) return;
+      const t = b.currentTime;
+      if (Math.abs((a.currentTime || 0) - t) > 0.12 && a.readyState >= 1) a.currentTime = t;
+      $('scrub').value = Math.round(t / b.duration * 1000);
+      $('time').textContent = `${t.toFixed(2)} / ${b.duration.toFixed(2)}`;
+    };
+    b.addEventListener('timeupdate', onTime);
+    b.addEventListener('play', () => { if (a.paused) a.play().catch(() => {}); $('playBtn').textContent = '⏸ 暂停'; });
+    b.addEventListener('pause', () => { if (!a.paused) a.pause(); $('playBtn').textContent = '▶ 播放'; });
+    $('scrub').addEventListener('input', e => {
+      if (!b.duration) return;
+      const t = e.target.value / 1000 * b.duration;
+      syncSeek(t);
+    });
+    $('playBtn').onclick = togglePlay;
+    document.querySelectorAll('input[name=aud]').forEach(r => {
+      r.onchange = () => setAudio(document.querySelector('input[name=aud]:checked').value);
+    });
+  }
+
+  /* ---------------- 渲染 ---------------- */
+  function resetDims() {
+    state.dims = {};
+    document.querySelectorAll('.seg').forEach(seg => {
+      seg.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+    });
   }
 
   function render(item) {
@@ -221,29 +368,52 @@
     $('fix').classList.remove('show');
     $('newPrompt').value = ''; $('note').value = '';
     $('btnOk').classList.remove('active'); $('btnBad').classList.remove('active');
+    $('promptbox').classList.remove('expanded');
+    $('togglePrompt').textContent = '展开';
+    resetDims();
 
-    const emo = `${item.emoji} ${item.emotion}（${item.emo_zh}）`;
-    $('meta').innerHTML = `
-      <span class="chip emo">${item.emoji} ${item.emotion}</span>
-      <span class="chip">${item.emo_zh}</span>
-      <span class="chip dim">${item.subset}</span>
-      <span class="chip dim">id ${item.origin_id}</span>`;
+    const chips = [
+      `<span class="chip emo">${item.emoji} ${item.emotion}</span>`,
+      `<span class="chip">${item.emo_zh}</span>`,
+      `<span class="chip dim">${item.subset_zh || item.subset}</span>`,
+    ];
+    if (item.intensity) chips.push(`<span class="chip dim">强度 ${item.intensity}（${item.intensity_zh}）</span>`);
+    if (item.trans_from) chips.push(`<span class="chip dim">${item.trans_from_zh} → ${item.emo_zh}</span>`);
+    chips.push(`<span class="chip dim">源 ${item.origin_id}</span>`);
+    if (item.duration) chips.push(`<span class="chip dim">${item.duration}s</span>`);
+    $('meta').innerHTML = chips.join('');
+
     $('prompt').textContent = item.prompt || '（无）';
     $('oid').textContent = item.origin_id;
     $('sid').textContent = '#' + item.id;
     $('targetEmo').textContent = `${item.emoji} ${item.emo_zh}`;
 
-    resetFiles();
-    const o = $('imgO'), e = $('imgE');
-    o.onload = () => { o.hidden = false; $('sk1').hidden = true; };
-    e.onload = () => { e.hidden = false; $('sk2').hidden = true; };
-    o.onerror = () => { $('sk1').textContent = '原图加载失败'; };
-    e.onerror = () => { $('sk2').textContent = '编辑图加载失败'; };
-    o.src = `/img?item=${item.id}&v=origin&t=${Date.now()}`;
-    e.src = `/img?item=${item.id}&v=edit&t=${Date.now()}`;
+    // 强度档位只对 single/grad 有意义；过渡只对 trans 有意义
+    $('rowIntensity').style.display = item.subset === 'trans' ? 'none' : '';
+    $('rowTrans').style.display = item.subset === 'trans' ? '' : 'none';
+
+    const a = vO(), b = vE();
+    a.hidden = true; b.hidden = true;
+    $('sk1').hidden = false; $('sk2').hidden = false;
+    $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
+
+    const ts = Date.now();
+    a.onloadeddata = () => { a.hidden = false; $('sk1').hidden = true; };
+    b.onloadeddata = () => { b.hidden = false; $('sk2').hidden = true; };
+    a.onerror = () => { $('sk1').textContent = '源视频加载失败'; };
+    b.onerror = () => { $('sk2').textContent = '编辑视频加载失败'; };
+
+    a.src = `/vid?item=${item.id}&v=origin&t=${ts}`;
+    b.src = `/vid?item=${item.id}&v=edit&t=${ts}`;
+    a.load(); b.load();
+    setAudio('edit');
+    pauseBoth();
+    $('scrub').value = 0;
+    $('time').textContent = '0.00 / 0.00';
   }
 
   async function loadNext() {
+    pauseBoth();
     $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
     const d = await api('/api/next');
     me = d.me; paintStats(d.stats);
@@ -254,6 +424,25 @@
       return;
     }
     render(d.item);
+  }
+
+  /* ---------------- 维度选择 ---------------- */
+  document.querySelectorAll('.seg').forEach(seg => {
+    const key = seg.dataset.k;
+    seg.querySelectorAll('button').forEach(btn => {
+      btn.onclick = () => {
+        const on = btn.classList.contains('on');
+        seg.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+        if (on) { delete state.dims[key]; return; }
+        btn.classList.add('on');
+        state.dims[key] = btn.dataset.v;
+      };
+    });
+  });
+
+  const REQUIRED = [['emo_clarity', '情绪可辨识度'], ['identity_keep', '身份保持'], ['comp_keep', '构图/动作保持']];
+  function missingDims() {
+    return REQUIRED.filter(([k]) => !(k in state.dims)).map(([, zh]) => zh);
   }
 
   function setMode(mode) {
@@ -272,21 +461,29 @@
   }
 
   async function submit(verdict) {
-    if (!state.item || state.busy) return;
+    if (!state.item) return;
+    const miss = missingDims();
+    if (miss.length) { toast('请先选择：' + miss.join('、'), 2400); return; }
+
     const payload = {
       item_id: state.item.id,
       verdict,
       new_prompt: verdict === 'bad' ? $('newPrompt').value.trim() : '',
       note: verdict === 'bad' ? $('note').value.trim() : '',
-      ms: Date.now() - state.started
+      ms: Date.now() - state.started,
+      emo_clarity: state.dims.emo_clarity || null,
+      intensity_fit: state.dims.intensity_fit || null,
+      identity_keep: state.dims.identity_keep || null,
+      comp_keep: state.dims.comp_keep || null,
+      audio_keep: state.dims.audio_keep || null,
+      trans_smooth: state.dims.trans_smooth || null,
     };
     if (verdict === 'bad' && !payload.new_prompt) { toast('请先写出新的 prompt'); $('newPrompt').focus(); return; }
     if (verdict === 'bad' && payload.new_prompt === (state.item.prompt || '').trim()) {
-      if (!confirm('新 prompt 和原来的一样，这样收集到的内容和原始 prompt 没区别。确定要这样提交吗？')) {
+      if (!confirm('新 prompt 和原来的一样，收集到的内容和原始 prompt 没区别。确定要这样提交吗？')) {
         $('newPrompt').focus(); return;
       }
     }
-    state.busy = true;
     $('btnSubmit').disabled = true;
     try {
       const d = await api('/api/label', {
@@ -299,7 +496,6 @@
       if (String(ex.message).includes('已由')) { toast(ex.message, 2200); await loadNext(); }
       else toast('提交失败：' + ex.message, 2600);
     } finally {
-      state.busy = false;
       $('btnSubmit').disabled = false;
     }
   }
@@ -316,10 +512,15 @@
     } catch (ex) { toast('跳过失败：' + ex.message); }
   }
 
-  // 点「表达正确」= 直接提交并跳下一张（不用再按回车）
-  $('btnOk').onclick = () => submit('ok');
+  $('btnOk').onclick = () => setMode('ok');
   $('btnBad').onclick = () => setMode('bad');
   $('btnSubmit').onclick = () => submit('bad');
+
+  $('togglePrompt').onclick = () => {
+    const box = $('promptbox');
+    box.classList.toggle('expanded');
+    $('togglePrompt').textContent = box.classList.contains('expanded') ? '收起' : '展开';
+  };
 
   $('exportBtn').onclick = () => {
     const code = prompt('输入导出口令（管理员）：');
@@ -337,20 +538,18 @@
       if (ev.key === 'Escape') { $('fix').classList.remove('show'); }
       return;
     }
-    if (ev.key === '1') { submit('ok'); }
+    if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); return; }
+    if (ev.key === '1') { setMode('ok'); }
     else if (ev.key === '2') { setMode('bad'); }
     else if (ev.key === 'Enter') {
       if (state.mode === 'bad') submit('bad');
+      else if (state.mode === 'ok') submit('ok');
+      else { toast('先按 1 或 2 选择结论', 1600); }
     }
     else if (ev.key === 's' || ev.key === 'S') skip();
-    else if (ev.key === 'Escape') $('zoom').classList.remove('show');
   });
 
-  ['imgO', 'imgE'].forEach(id => {
-    $(id).onclick = () => { $('zoomImg').src = $(id).src; $('zoom').classList.add('show'); };
-  });
-  $('zoom').onclick = () => $('zoom').classList.remove('show');
-
+  wireVideos();
   loadNext().catch(e => { if (e.message !== 'login') toast('加载失败：' + e.message, 4000); });
 })();
 </script>

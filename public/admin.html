@@ -76,8 +76,10 @@
   <table>
     <thead>
       <tr>
-        <th>时间</th><th>#</th><th>标注员</th><th>子集 / 情绪</th><th>判定</th><th>用时</th>
-        <th>原 prompt</th><th>新 prompt</th><th>备注</th><th>图（原 / 改）</th>
+        <th>时间</th><th>#</th><th>标注员</th><th>子集 / 情绪</th><th>判定</th>
+        <th>辨识 / 身份 / 构图</th><th>强度 / 音频 / 过渡</th>
+        <th>用时</th>
+        <th>原 prompt</th><th>新 prompt</th><th>备注</th><th>视频（源 / 改）</th>
       </tr>
     </thead>
     <tbody id="rows"></tbody>
@@ -156,15 +158,17 @@
         <td class="num">${fmtTime(r.created_at)}</td>
         <td class="num">${r.item_id}</td>
         <td>${esc(r.annotator)}</td>
-        <td class="num">${esc(r.subset)}/${esc(r.emotion)}</td>
+        <td class="num">${esc(r.subset)}/${esc(r.emotion)}${r.intensity ? '/' + esc(r.intensity) : ''}${r.trans_from ? ' ←' + esc(r.trans_from) : ''}</td>
         <td class="${ok ? 'v-ok' : 'v-bad'}">${ok ? '正确' : '不正确'}</td>
+        <td class="num">${esc(r.emo_clarity) || '—'} / ${esc(r.identity_keep) || '—'} / ${esc(r.comp_keep) || '—'}</td>
+        <td class="num">${esc(r.intensity_fit) || '—'} / ${esc(r.audio_keep) || '—'} / ${esc(r.trans_smooth) || '—'}</td>
         <td class="num ${secs < 10 ? 'slow' : ''}">${secs}s</td>
         <td class="prompt">${esc(r.prompt)}</td>
         <td class="prompt">${esc(r.new_prompt) || '—'}</td>
         <td class="note">${esc(r.note) || '—'}</td>
         <td><div class="thumbs">
-          <img loading="lazy" src="/admin/img?code=${encodeURIComponent(code)}&item=${r.item_id}&v=origin" alt="原图">
-          <img loading="lazy" src="/admin/img?code=${encodeURIComponent(code)}&item=${r.item_id}&v=edit" alt="改图">
+          <video loading="lazy" src="/admin/vid?code=${encodeURIComponent(code)}&item=${r.item_id}&v=origin" preload="metadata" muted playsinline title="源视频"></video>
+          <video loading="lazy" src="/admin/vid?code=${encodeURIComponent(code)}&item=${r.item_id}&v=edit" preload="metadata" muted playsinline title="编辑后"></video>
         </div></td>
       </tr>`;
     }).join('');

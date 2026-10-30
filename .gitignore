@@ -1,11 +1,25 @@
+# 依赖与本地构建产物
 node_modules/
-public/img/
-seed*.sql
-_*.py
-*.log
+.pnpm-store/
+package-lock.json.bak
+
+# wrangler 本地状态
 .wrangler/
 .dev.vars
-package-lock.json
+.wrangler.toml.bak
 
-seed_via_api.py
-wrangler.worker.jsonc.bak
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 媒体资源不进 git —— 视频走对象存储（R2）或服务器，详见 README「存储架构」
+# 本地只保留构建时的临时副本，部署完即可删除
+public/vid/
+public/img/
+
+# 导出与备份
+*.csv
+!schema.sql
+backup*/
+dist/

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>EmoEdit 情感标注 · 登录</title>
+<title>EmoEdit 视频情感编辑标注 · 登录</title>
 <style>
   :root{
     --bg:#0b1020; --bg2:#141a2e; --card:#1b2238; --line:#2b3350;
@@ -40,8 +40,8 @@
 </head>
 <body>
 <form class="card" id="f" autocomplete="off">
-  <h1>EmoEdit 情感标注</h1>
-  <p class="sub">判断编辑后的图像是否准确表达了目标情绪</p>
+  <h1>EmoEdit 视频标注</h1>
+  <p class="sub">判断编辑后的视频是否准确表达目标情绪，同时保住身份、构图与动作</p>
 
   <label for="code">访问口令</label>
   <input id="code" name="code" placeholder="EMO-XXXX" required autocapitalize="characters">
@@ -51,7 +51,7 @@
 
   <button id="go" type="submit">进入标注</button>
   <div class="err" id="err"></div>
-  <div class="hint">同一份数据每人只标一次，标完自动跳到下一张</div>
+  <div class="hint">同一份数据每人只标一次，标完自动跳到下一段视频</div>
 </form>
 
 <script>

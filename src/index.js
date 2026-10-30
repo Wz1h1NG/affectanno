@@ -1,7 +1,10 @@
 /**
- * EmoEdit 情感标注台 · Cloudflare Worker 版
- * 数据库：D1    图片：Worker 静态资源（后续可换 R2）
- * 与本地 Python 版接口完全兼容
+ * EmoEdit 情感标注台 · Cloudflare Worker 版（视频）
+ * 数据库：D1    视频：Worker 静态资源（env.ASSETS）
+ * 相对图片版的改动：
+ *   - /img → /vid，支持 HTTP Range（拖动进度条必需）
+ *   - items 增加 intensity / trans_from / duration 语义
+ *   - labels 增加 6 个分项维度
  */
 
 const SESSION_TTL = 30 * 86400;   // 30 天
@@ -10,12 +13,16 @@ const CLAIM_TTL = 15 * 60;        // 15 分钟
 const EMOJI = {
   amusement: "😄", anger: "😠", awe: "😮", contentment: "😌",
   disgust: "🤢", excitement: "🤩", fear: "😨", sadness: "😢",
+  happy: "😊", sad: "😢", worried: "😟", surprise: "😮", neutral: "😐",
 };
 const EMO_ZH = {
   amusement: "愉悦 / 有趣", anger: "愤怒", awe: "惊叹 / 敬畏",
   contentment: "满足 / 安宁", disgust: "厌恶", excitement: "兴奋",
   fear: "恐惧", sadness: "悲伤",
+  happy: "开心", sad: "悲伤", worried: "担忧", surprise: "惊讶", neutral: "中性",
 };
+const INTENSITY_ZH = { L: "轻微", M: "中等", H: "强烈" };
+const SUBSET_ZH = { single: "单一情绪", grad: "强度梯度", trans: "情绪过渡" };
 
 /* ---------------------------------------------------------------- 工具 */
 
@@ -100,15 +107,22 @@ async function stats(env) {
 }
 
 function itemJson(row) {
+  const emotion = row.emotion || "";
   return {
     id: row.id,
     subset: row.subset,
-    emotion: row.emotion,
-    emoji: EMOJI[row.emotion] || "❓",
-    emo_zh: EMO_ZH[row.emotion] || row.emotion,
+    subset_zh: SUBSET_ZH[row.subset] || row.subset,
+    emotion,
+    emoji: EMOJI[emotion] || "❓",
+    emo_zh: EMO_ZH[emotion] || emotion,
+    intensity: row.intensity || "",
+    intensity_zh: INTENSITY_ZH[row.intensity] || "",
+    trans_from: row.trans_from || "",
+    trans_from_zh: row.trans_from ? (EMO_ZH[row.trans_from] || row.trans_from) : "",
     origin_id: row.origin_id,
+    duration: row.duration || null,
     prompt: row.prompt,
-    kind: row.kind || "image",
+    kind: row.kind || "video",
   };
 }
 
@@ -140,6 +154,51 @@ async function claimNext(env, name) {
   return null;
 }
 
+/* ---------------------------------------------------------------- 视频（Range） */
+
+// 浏览器播放/拖动进度条必须支持 206 Partial Content，否则 Safari 直接不播
+async function serveVideo(request, env, url, asset, cache) {
+  const res = await env.ASSETS.fetch(new URL("/" + asset, url.origin));
+  if (!res.ok) return json({ error: "no video" }, 404);
+
+  const buf = await res.arrayBuffer();
+  const total = buf.byteLength;
+  const headers = {
+    "Content-Type": "video/mp4",
+    "Accept-Ranges": "bytes",
+    "Cache-Control": cache || "private, max-age=86400",
+  };
+
+  const range = request.headers.get("Range");
+  if (range) {
+    const m = /bytes=(\d*)-(\d*)/.exec(range);
+    if (m && (m[1] !== "" || m[2] !== "")) {
+      let start, end;
+      if (m[1] === "") {
+        const n = parseInt(m[2], 10) || 0;
+        start = Math.max(0, total - n);
+        end = total - 1;
+      } else {
+        start = parseInt(m[1], 10);
+        end = m[2] === "" ? total - 1 : Math.min(parseInt(m[2], 10), total - 1);
+      }
+      if (!(start >= 0 && start <= end && start < total)) {
+        return new Response(null, {
+          status: 416,
+          headers: { "Content-Range": `bytes */${total}` },
+        });
+      }
+      const slice = buf.slice(start, end + 1);
+      headers["Content-Range"] = `bytes ${start}-${end}/${total}`;
+      headers["Content-Length"] = String(slice.byteLength);
+      return new Response(slice, { status: 206, headers });
+    }
+  }
+
+  headers["Content-Length"] = String(total);
+  return new Response(buf, { status: 200, headers });
+}
+
 /* ---------------------------------------------------------------- 路由 */
 
 export default {
@@ -148,7 +207,7 @@ export default {
     const p = url.pathname;
     const method = request.method;
 
-    if (p === "/health") return json({ ok: true, runtime: "workers" });
+    if (p === "/health") return json({ ok: true, runtime: "workers", mode: "video" });
 
     let name = null;
     const secret = await cfg(env, "secret");
@@ -160,8 +219,8 @@ export default {
       return env.ASSETS.fetch(new URL(file, url.origin));
     }
 
-    /* ---------- 图片（需要登录） ---------- */
-    if (method === "GET" && p === "/img") {
+    /* ---------- 视频（需要登录，支持 Range） ---------- */
+    if (method === "GET" && (p === "/vid" || p === "/img")) {
       if (!name) return json({ error: "login" }, 403);
       const id = parseInt(url.searchParams.get("item") || "0", 10);
       const v = url.searchParams.get("v") === "origin" ? "origin" : "edit";
@@ -170,11 +229,8 @@ export default {
       ).bind(id).first();
       if (!row) return json({ error: "no item" }, 404);
       const asset = v === "origin" ? row.origin_asset : row.edited_asset;
-      if (!asset) return json({ error: "no image" }, 404);
-      const res = await env.ASSETS.fetch(new URL("/" + asset, url.origin));
-      const h = new Headers(res.headers);
-      h.set("Cache-Control", "private, max-age=86400");
-      return new Response(res.body, { status: res.status, headers: h });
+      if (!asset) return json({ error: "no video" }, 404);
+      return serveVideo(request, env, url, asset, "private, max-age=86400");
     }
 
     /* ---------- 登录 ---------- */
@@ -213,7 +269,7 @@ export default {
     }
 
     /* ---------- 结果查看页：只需管理员口令 ---------- */
-    if (p === "/admin" || p === "/api/results" || p === "/admin/img") {
+    if (p === "/admin" || p === "/api/results" || p === "/admin/img" || p === "/admin/vid") {
       const code = url.searchParams.get("code") || "";
       const admin = (await cfg(env, "admin_code")) || "";
       if (!code || code !== admin) return json({ error: "need admin code" }, 403);
@@ -223,24 +279,23 @@ export default {
       if (p === "/api/results") {
         const rows = (await env.DB.prepare(`
           SELECT l.item_id, l.annotator, l.verdict, l.new_prompt, l.note, l.ms, l.created_at,
-                 i.subset, i.emotion, i.origin_id, i.prompt
+                 l.emo_clarity, l.intensity_fit, l.identity_keep, l.comp_keep,
+                 l.audio_keep, l.trans_smooth,
+                 i.subset, i.emotion, i.intensity, i.trans_from, i.origin_id, i.prompt
           FROM labels l JOIN items i ON i.id = l.item_id
           ORDER BY l.created_at DESC`).all()).results || [];
         return json({ stats: await stats(env), rows });
       }
 
-      // /admin/img
+      // /admin/img | /admin/vid
       const id = parseInt(url.searchParams.get("item") || "0", 10);
       const v = url.searchParams.get("v") === "origin" ? "origin" : "edit";
       const row = await env.DB.prepare(
         "SELECT origin_asset, edited_asset FROM items WHERE id=?").bind(id).first();
       if (!row) return json({ error: "no item" }, 404);
       const asset = v === "origin" ? row.origin_asset : row.edited_asset;
-      if (!asset) return json({ error: "no image" }, 404);
-      const res = await env.ASSETS.fetch(new URL("/" + asset, url.origin));
-      const h = new Headers(res.headers);
-      h.set("Cache-Control", "private, max-age=3600");
-      return new Response(res.body, { status: res.status, headers: h });
+      if (!asset) return json({ error: "no video" }, 404);
+      return serveVideo(request, env, url, asset, "private, max-age=3600");
     }
 
     // 结果页模板本身不对外暴露
@@ -273,6 +328,16 @@ export default {
       const newPrompt = String(body.new_prompt || "").trim();
       const note = String(body.note || "").trim();
       const ms = parseInt(body.ms || 0, 10) || 0;
+
+      // 分项维度
+      const emoClarity = parseInt(body.emo_clarity || 0, 10) || null;
+      const intensityFit = ["weaker", "good", "stronger"].includes(body.intensity_fit)
+        ? body.intensity_fit : null;
+      const identityKeep = parseInt(body.identity_keep || 0, 10) || null;
+      const compKeep = parseInt(body.comp_keep || 0, 10) || null;
+      const audioKeep = ["yes", "no", "na"].includes(body.audio_keep) ? body.audio_keep : null;
+      const transSmooth = ["yes", "no", "na"].includes(body.trans_smooth) ? body.trans_smooth : null;
+
       if (verdict === "bad" && !newPrompt) return json({ error: "标为不正确时请写新的 prompt" }, 400);
 
       const item = await env.DB.prepare("SELECT id FROM items WHERE id=?").bind(id).first();
@@ -281,16 +346,21 @@ export default {
       const other = await env.DB.prepare(
         "SELECT annotator FROM labels WHERE item_id=? AND annotator<>?"
       ).bind(id, name).first();
-      if (other) return json({ error: `这张已由 ${other.annotator} 标注，自动跳下一张` }, 409);
+      if (other) return json({ error: `这条已由 ${other.annotator} 标注，自动跳下一条` }, 409);
 
       await env.DB.prepare(`
-        INSERT INTO labels(item_id,annotator,verdict,new_prompt,note,ms,created_at)
-        VALUES(?,?,?,?,?,?,?)
+        INSERT INTO labels(item_id,annotator,verdict,new_prompt,note,ms,created_at,
+                           emo_clarity,intensity_fit,identity_keep,comp_keep,audio_keep,trans_smooth)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(item_id) DO UPDATE SET
           annotator=excluded.annotator, verdict=excluded.verdict,
           new_prompt=excluded.new_prompt, note=excluded.note,
-          ms=excluded.ms, created_at=excluded.created_at`
-      ).bind(id, name, verdict, newPrompt, note, ms, Date.now() / 1000).run();
+          ms=excluded.ms, created_at=excluded.created_at,
+          emo_clarity=excluded.emo_clarity, intensity_fit=excluded.intensity_fit,
+          identity_keep=excluded.identity_keep, comp_keep=excluded.comp_keep,
+          audio_keep=excluded.audio_keep, trans_smooth=excluded.trans_smooth`
+      ).bind(id, name, verdict, newPrompt, note, ms, Date.now() / 1000,
+             emoClarity, intensityFit, identityKeep, compKeep, audioKeep, transSmooth).run();
 
       await env.DB.prepare("DELETE FROM claims WHERE item_id=?").bind(id).run();
       return json({ ok: true, stats: await stats(env) });
@@ -312,10 +382,12 @@ export default {
     if (method === "GET" && p === "/export.csv") {
       const code = url.searchParams.get("code") || "";
       const admin = (await cfg(env, "admin_code")) || "";
-      if (!code || code !== admin) return json({ error: "need admin code" }, 403);
+      if (!code || !admin || code !== admin) return json({ error: "need admin code" }, 403);
       const rows = (await env.DB.prepare(`
-        SELECT i.id,i.subset,i.emotion,i.origin_id,i.prompt,i.origin_asset,i.edited_asset,
-               l.annotator,l.verdict,l.new_prompt,l.note,l.ms,l.created_at
+        SELECT i.id,i.subset,i.emotion,i.intensity,i.trans_from,i.origin_id,i.prompt,
+               i.origin_asset,i.edited_asset,
+               l.annotator,l.verdict,l.emo_clarity,l.intensity_fit,l.identity_keep,
+               l.comp_keep,l.audio_keep,l.trans_smooth,l.new_prompt,l.note,l.ms,l.created_at
         FROM labels l JOIN items i ON i.id=l.item_id ORDER BY i.id`).all()).results || [];
       const esc = (v) => {
         const s = v === null || v === undefined ? "" : String(v);
@@ -324,13 +396,17 @@ export default {
       // 导出用北京时间（UTC+8），和旧版一致
       const bjTime = (ts) => new Date((ts || 0) * 1000 + 8 * 3600 * 1000)
         .toISOString().replace("T", " ").slice(0, 19);
-      const head = ["item_id", "subset", "emotion", "origin_id", "origin_prompt", "verdict",
-        "new_prompt", "note", "annotator", "seconds", "created_at", "origin_path", "edited_path"];
+      const head = ["item_id", "subset", "emotion", "intensity", "trans_from", "origin_id",
+        "origin_prompt", "verdict", "emo_clarity", "intensity_fit", "identity_keep",
+        "comp_keep", "audio_keep", "trans_smooth", "new_prompt", "note", "annotator",
+        "seconds", "created_at", "origin_path", "edited_path"];
       const lines = [head.join(",")];
       for (const r of rows) {
         lines.push([
-          r.id, r.subset, r.emotion, r.origin_id, r.prompt,
+          r.id, r.subset, r.emotion, r.intensity || "", r.trans_from || "", r.origin_id, r.prompt,
           r.verdict === "ok" ? "正确" : "不正确",
+          r.emo_clarity ?? "", r.intensity_fit || "", r.identity_keep ?? "",
+          r.comp_keep ?? "", r.audio_keep || "", r.trans_smooth || "",
           r.new_prompt || "", r.note || "", r.annotator,
           ((r.ms || 0) / 1000).toFixed(1),
           bjTime(r.created_at),
@@ -340,7 +416,7 @@ export default {
       return new Response("\ufeff" + lines.join("\n"), {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
-          "Content-Disposition": 'attachment; filename="emoedit_labels.csv"',
+          "Content-Disposition": 'attachment; filename="emoedit_video_labels.csv"',
           "Cache-Control": "no-store",
         },
       });
