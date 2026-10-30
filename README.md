@@ -9,37 +9,74 @@
 
 ## 存储架构（重要）
 
-三个地方分工明确，**本地不留任何持久数据**：
+四个地方分工明确，**本地不留任何持久数据**：
 
 | 内容 | 存放位置 | 说明 |
 |---|---|---|
-| 代码（HTML / JS / SQL） | **GitHub** `Wz1h1NG/affectanno` | 只有源码，几百 KB |
-| **视频资源** | **Cloudflare R2**（推荐）/ Workers 静态资源（小批量临时用） | 上万条时 R2 是唯一可行方案 |
-| 标注结果 | **Cloudflare D1** | SQLite，标签数据 |
-| 生成好的原始视频 | **集群** `zehengW/emotion_edit_pilot_*/final/` | 不下载到本地 |
+| 代码（HTML / JS / SQL） | **GitHub** `Wz1h1NG/affectanno` | 只有源码，约 40 KB |
+| **视频母本** | **GBU** `zehengW/video_anno_site/public/vid/` | 唯一的权威副本 |
+| 站点媒体 | **Cloudflare Workers 静态资源** | 部署时从 GBU 同步上去 |
+| 标注结果 | **Cloudflare D1** + **GBU** `zehengW/emoedit_anno_exports/` | D1 在线，CSV 定期归档到 GBU |
+
+### GBU 的实际限制（实测结论）
+
+| 事实 | 后果 |
+|---|---|
+| **计算节点完全没有外网**（gpuh03 访问 nodejs / npm / Cloudflare API 全部超时）| 部署**不能**放在计算节点 |
+| 只有登录节点 `login02` 能联外网，但不允许跑代码 | 部署**不能**放在登录节点 |
+| `cit_ztyu` 不在 `HW_910b`（NPU 分区）的 AllowAccounts 里 | 用不了 NPU 节点 |
+
+因此 **`wrangler deploy` 必须在本地机器执行**（本机有 node + 外网）。
+这不是把数据放本地，而是把 GBU 的媒体**临时同步过来上传、传完即删**：
+
+```
+GBU 母本  --scp-->  本地临时 public/vid  --wrangler deploy-->  Cloudflare
+
+                    ↑ 上传完成后立刻删除
+```
+
+`tools/deploy.ps1` 就是把这三步串起来的一条命令。
 
 ### 为什么媒体不进 git
 
 - git 对二进制不友好，仓库会迅速膨胀，clone/pull 变慢
 - GitHub 单文件 100 MB 上限、仓库推荐 < 1 GB
-- 上万条视频约 2.5–5 GB，远超舒适区
-- 视频是**数据**，不是**代码**；改一次数据不该产生一次代码提交
+- GitHub 只放代码；视频是**数据**，改一次数据不该产生一次代码提交
 
-`.gitignore` 已排除 `public/vid/`、`public/img/`，**部署时临时拉下来、传完就删**。
+`.gitignore` 已排除 `public/vid/`、`public/img/`。
+
+### 分批方案：每次 1000 条
+
+Workers 静态资源上限 **2 万个文件**（每条样本占 2 个：源 + 编辑），所以一次最多约 1 万条。
+实际按 **1000 条/批** 滚动：
+
+| 步骤 | 操作 | 位置 |
+|---|---|---|
+| 1 | 生成第 N 批视频（约 1000 条）→ `video_anno_site/public/vid/` | GBU |
+| 2 | `tools/deploy.ps1` 同步媒体并部署 | 本地 → Cloudflare |
+| 3 | 写 `items` 表（该批 1000 条） | D1 |
+| 4 | 标注员标注 | 浏览器 |
+| 5 | `tools/export_labels.py` 导出标签 | D1 → GBU |
+| 6 | 归档并清空 labels，换第 N+1 批 | D1 |
+
+1000 条 × 2 × 250 KB ≈ **500 MB/批**，上传时间几分钟，完全可接受。
+
+⚠️ Workers 静态资源是**目录快照**：部署时目录里有什么就上传什么，没有的会被删掉。
+所以每批部署前必须保证 `public/vid` 是完整的目标批次（`deploy.ps1` 会先清空再同步）。
 
 ### 规模上限对照
 
 | 方案 | 文件数上限 | 单文件 | 适用规模 |
 |---|---|---|---|
-| Workers 静态资源 | 2 万 | 25 MB | ≤ 数千条（当前 59 个 / 17.9 MB）|
-| **R2 + Worker 绑定** | **无限** | 5 TB | **上万条以上** |
+| Workers 静态资源 | 2 万 | 25 MB | ≤ 1 万条（每批 1000 条滚动即可）|
+| R2 + Worker 绑定 | 无限 | 5 TB | 十几万条以上 |
 
-超过约 500 MB 或 5000 条时，把 `env.ASSETS.fetch()` 换成：
+**R2 当前未开通**（`code 10042: Please enable R2 through the Cloudflare Dashboard`）。
+若以后要一次性挂十几万条，去控制台启用 R2（需绑卡，免费 10 GB + 出网免费），然后把
+`env.ASSETS.fetch()` 换成：
 
 ```js
-const obj = await env.BUCKET.get(asset, {
-  range: request.headers,   // R2 原生支持 Range
-});
+const obj = await env.BUCKET.get(asset, { range: request.headers });
 return new Response(obj.body, {
   status: obj.range ? 206 : 200,
   headers: { "Content-Type": "video/mp4", "Accept-Ranges": "bytes" },
