@@ -310,6 +310,45 @@ export default {
       return json({ item: row ? itemJson(row) : null, stats: st, me: name });
     }
 
+    /* ---------- 返修：取回自己最近标注过的样本 ----------
+       offset=0 是最近一条，1 是再往前一条，依此类推。
+       返回的 item 附带上次的标签内容，前端据此回填表单。 */
+    if (method === "GET" && p === "/api/last") {
+      const offset = Math.max(0, parseInt(url.searchParams.get("offset") || "0", 10) || 0);
+      const cnt = (await env.DB.prepare(
+        "SELECT COUNT(*) c FROM labels WHERE annotator=?").bind(name).first()).c;
+      if (!cnt) return json({ item: null, label: null, total: 0, offset }, 200);
+      const row = await env.DB.prepare(`
+        SELECT i.*, l.verdict, l.emo_clarity, l.intensity_fit, l.identity_keep,
+               l.comp_keep, l.audio_keep, l.trans_smooth, l.new_prompt, l.note, l.ms
+        FROM labels l JOIN items i ON i.id = l.item_id
+        WHERE l.annotator = ?
+        ORDER BY l.id DESC
+        LIMIT 1 OFFSET ?`).bind(name, offset).first();
+      if (!row) {
+        // offset 越界：夹到边界的最后一条
+        return json({ item: null, label: null, total: cnt, offset, outOfRange: true }, 200);
+      }
+      return json({
+        item: itemJson(row),
+        label: {
+          verdict: row.verdict,
+          emo_clarity: row.emo_clarity,
+          intensity_fit: row.intensity_fit,
+          identity_keep: row.identity_keep,
+          comp_keep: row.comp_keep,
+          audio_keep: row.audio_keep,
+          trans_smooth: row.trans_smooth,
+          new_prompt: row.new_prompt || "",
+          note: row.note || "",
+          ms: row.ms || 0,
+        },
+        total: cnt,
+        offset,
+        canOlder: offset + 1 < cnt,
+      });
+    }
+
     if (method === "GET" && p === "/api/stats") {
       const st = await stats(env);
       st.me = name;

@@ -47,15 +47,30 @@
 
   .promptbox{
     background:var(--card); border:1px solid var(--line); border-radius:12px;
-    padding:10px 13px; margin-bottom:14px; font-size:14px;
+    padding:10px 13px; margin-bottom:14px; font-size:14px; position:relative;
   }
   .promptbox .k{color:var(--dim); font-size:12px; margin-right:8px}
+  .promptbox .tools{float:right; display:flex; gap:6px}
+  .promptbox .tools .ghost{padding:3px 9px; font-size:11.5px}
   .promptbox code{
-    display:block; max-height:96px; overflow:auto; margin-top:6px;
-    color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:12.5px;
-    white-space:pre-wrap; word-break:break-word;
+    display:block; max-height:300px; overflow:auto; margin-top:8px;
+    padding:10px 12px; border-radius:9px; background:#0e1424; border:1px solid #1e2740;
+    color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:13px; line-height:1.65;
+    white-space:pre-wrap; word-break:break-word; resize:vertical;
   }
-  .promptbox.expanded code{max-height:none}
+  .promptbox.expanded code{max-height:72vh}
+  .promptbox.mini code{max-height:0; padding:0; border:0; margin:0; overflow:hidden}
+
+  /* 返修横幅 */
+  .revise{
+    display:none; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:12px; padding:10px 14px; border-radius:12px;
+    background:rgba(255,200,87,.12); border:1px solid rgba(255,200,87,.45); color:#ffe1a1; font-size:13.5px;
+  }
+  .revise.show{display:flex}
+  .revise b{color:#fff}
+  .revise .ghost{border-color:rgba(255,200,87,.5); color:#ffe1a1}
+  .revise .ghost:hover{background:rgba(255,200,87,.15); color:#fff}
 
   .stage{display:grid; grid-template-columns:1fr 1fr; gap:14px}
   @media (max-width:820px){ .stage{grid-template-columns:1fr} }
@@ -151,6 +166,7 @@
   <div class="bar"><i id="bar"></i></div>
   <div class="counts" id="counts">– / –</div>
   <div class="who">标注员 <b id="me">…</b></div>
+  <button class="ghost" id="backBtn" title="回到你上一条标注，重新打分">↩ 修改上一条</button>
   <button class="ghost" id="exportBtn">导出 CSV</button>
   <button class="ghost" id="outBtn">换人</button>
 </header>
@@ -158,9 +174,17 @@
 <main>
   <div id="view">
     <div class="meta" id="meta"></div>
+    <div class="revise" id="revise">
+      <span>🛠 正在修改你标注过的：<b id="reviseName"></b>（<span id="revisePos"></span>）</span>
+      <button class="ghost" id="olderBtn">◀ 再往前一条</button>
+      <button class="ghost" id="newerBtn">回到最新 ▶</button>
+    </div>
     <div class="promptbox" id="promptbox">
       <span class="k">使用的编辑 prompt</span>
-      <span class="ghost" id="togglePrompt" style="float:right">展开</span>
+      <span class="tools">
+        <button class="ghost" id="copyPrompt">复制</button>
+        <button class="ghost" id="togglePrompt">收起</button>
+      </span>
       <code id="prompt"></code>
     </div>
 
@@ -253,6 +277,7 @@
       <span><kbd>2</kbd> 不正确</span>
       <span><kbd>Enter</kbd> 提交</span>
       <span><kbd>S</kbd> 跳过</span>
+      <span><kbd>B</kbd> 修改上一条</span>
       <span>两条视频同步播放，可拖动进度条逐帧对照</span>
     </footer>
   </div>
@@ -269,7 +294,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = {item: null, started: 0, mode: null, stats: null, dims: {}};
+  const state = {item: null, started: 0, mode: null, stats: null, dims: {}, revising: false, backOffset: 0, backTotal: 0};
   let me = '';
 
   const api = async (url, opt) => {
@@ -362,14 +387,14 @@
     });
   }
 
-  function render(item) {
+  function render(item, label) {
     state.item = item; state.started = Date.now(); state.mode = null;
     $('done').classList.remove('show'); $('view').style.display = '';
     $('fix').classList.remove('show');
     $('newPrompt').value = ''; $('note').value = '';
     $('btnOk').classList.remove('active'); $('btnBad').classList.remove('active');
-    $('promptbox').classList.remove('expanded');
-    $('togglePrompt').textContent = '展开';
+    $('promptbox').classList.remove('mini');
+    $('togglePrompt').textContent = '收起';
     resetDims();
 
     const chips = [
@@ -392,6 +417,10 @@
     $('rowIntensity').style.display = item.subset === 'trans' ? 'none' : '';
     $('rowTrans').style.display = item.subset === 'trans' ? '' : 'none';
 
+    // 返修模式：回填上次的答案
+    if (label) applyLabel(label);
+    else hideRevise();
+
     const a = vO(), b = vE();
     a.hidden = true; b.hidden = true;
     $('sk1').hidden = false; $('sk2').hidden = false;
@@ -412,8 +441,60 @@
     $('time').textContent = '0.00 / 0.00';
   }
 
+  /* ---- 把上次的标签回填到表单 ---- */
+  function applyLabel(label) {
+    const setSeg = (key, val) => {
+      if (val === null || val === undefined || val === '') return;
+      const seg = document.querySelector(`.seg[data-k="${key}"]`);
+      if (!seg) return;
+      const btn = seg.querySelector(`button[data-v="${val}"]`);
+      if (!btn) return;
+      seg.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      state.dims[key] = String(val);
+    };
+    setSeg('emo_clarity', label.emo_clarity);
+    setSeg('intensity_fit', label.intensity_fit);
+    setSeg('identity_keep', label.identity_keep);
+    setSeg('comp_keep', label.comp_keep);
+    setSeg('audio_keep', label.audio_keep);
+    setSeg('trans_smooth', label.trans_smooth);
+
+    $('newPrompt').value = label.new_prompt || '';
+    $('note').value = label.note || '';
+    if (label.verdict) setMode(label.verdict);
+
+    $('revise').classList.add('show');
+    $('revisePos').textContent = `第 ${state.backOffset + 1} / ${state.backTotal} 条（从最新往前数）`;
+    $('olderBtn').disabled = state.backOffset + 1 >= state.backTotal;
+    $('newerBtn').disabled = state.backOffset === 0;
+  }
+
+  function hideRevise() {
+    state.revising = false;
+    $('revise').classList.remove('show');
+  }
+
+  /* ---- 返修：取回自己最近标注的第 offset 条 ---- */
+  async function loadLast(offset) {
+    pauseBoth();
+    const d = await api('/api/last?offset=' + offset);
+    if (!d.item) {
+      if (d.outOfRange) toast('已经是最早的一条了', 1600);
+      else toast('你还没有标注过任何样本', 1800);
+      return;
+    }
+    state.revising = true;
+    state.backOffset = d.offset;
+    state.backTotal = d.total;
+    render(d.item, d.label);
+    toast('已载入你标注过的这条，改完按 Enter 提交覆盖', 2200);
+  }
+
   async function loadNext() {
     pauseBoth();
+    hideRevise();
+    state.backOffset = 0;
     $('sk1').textContent = '加载中…'; $('sk2').textContent = '加载中…';
     const d = await api('/api/next');
     me = d.me; paintStats(d.stats);
@@ -485,12 +566,14 @@
       }
     }
     $('btnSubmit').disabled = true;
+    setMode(verdict);
     try {
       const d = await api('/api/label', {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
       });
       paintStats(d.stats);
-      toast(verdict === 'ok' ? '已记录：正确' : '已记录：不正确 + 新 prompt', 900);
+      const wasRevising = state.revising;
+      toast(wasRevising ? '已覆盖更新这条标注' : (verdict === 'ok' ? '已记录：正确' : '已记录：不正确 + 新 prompt'), 1100);
       await loadNext();
     } catch (ex) {
       if (String(ex.message).includes('已由')) { toast(ex.message, 2200); await loadNext(); }
@@ -516,10 +599,31 @@
   $('btnBad').onclick = () => setMode('bad');
   $('btnSubmit').onclick = () => submit('bad');
 
+  /* ---- prompt 面板：收起/展开 + 复制 ---- */
   $('togglePrompt').onclick = () => {
     const box = $('promptbox');
-    box.classList.toggle('expanded');
-    $('togglePrompt').textContent = box.classList.contains('expanded') ? '收起' : '展开';
+    box.classList.toggle('mini');
+    $('togglePrompt').textContent = box.classList.contains('mini') ? '展开' : '收起';
+  };
+  $('copyPrompt').onclick = async () => {
+    const txt = $('prompt').textContent || '';
+    try {
+      await navigator.clipboard.writeText(txt);
+      toast('prompt 已复制', 1200);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = txt; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); ta.remove();
+      toast('prompt 已复制', 1200);
+    }
+  };
+
+  /* ---- 返修 ---- */
+  $('backBtn').onclick = () => loadLast(0).catch(e => toast('取回失败：' + e.message, 2400));
+  $('olderBtn').onclick = () => loadLast(state.backOffset + 1).catch(e => toast('取回失败：' + e.message, 2400));
+  $('newerBtn').onclick = () => {
+    if (state.backOffset === 0) return loadNext();
+    loadLast(0).catch(e => toast('取回失败：' + e.message, 2400));
   };
 
   $('exportBtn').onclick = () => {
@@ -547,6 +651,7 @@
       else { toast('先按 1 或 2 选择结论', 1600); }
     }
     else if (ev.key === 's' || ev.key === 'S') skip();
+    else if (ev.key === 'b' || ev.key === 'B') { loadLast(0).catch(() => {}); }
   });
 
   wireVideos();
