@@ -122,6 +122,7 @@ function itemJson(row) {
     origin_id: row.origin_id,
     duration: row.duration || null,
     prompt: row.prompt,
+    prompt_zh: row.prompt_zh || "",
     kind: row.kind || "video",
   };
 }
