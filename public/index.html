@@ -52,14 +52,53 @@
   .promptbox .k{color:var(--dim); font-size:12px; margin-right:8px}
   .promptbox .tools{float:right; display:flex; gap:6px}
   .promptbox .tools .ghost{padding:3px 9px; font-size:11.5px}
-  .promptbox code{
-    display:block; max-height:300px; overflow:auto; margin-top:8px;
-    padding:10px 12px; border-radius:9px; background:#0e1424; border:1px solid #1e2740;
-    color:#ffd479; font-family:ui-monospace,Consolas,monospace; font-size:13px; line-height:1.65;
-    white-space:pre-wrap; word-break:break-word; resize:vertical;
+  .pwrap{
+    max-height:340px; overflow:auto; margin-top:8px; padding:4px 12px 10px;
+    border-radius:9px; background:#0e1424; border:1px solid #1e2740;
+    font-size:13.5px; line-height:1.7; color:#c9d2e8; resize:vertical;
   }
-  .promptbox.expanded code{max-height:72vh}
-  .promptbox.mini code{max-height:0; padding:0; border:0; margin:0; overflow:hidden}
+  .promptbox.expanded .pwrap{max-height:74vh}
+  .promptbox.mini .pwrap{max-height:0; padding:0; border:0; margin:0; overflow:hidden}
+
+  /* 每段一个色条 + 中英标题 */
+  .psec{margin:10px 0; padding-left:11px; border-left:3px solid var(--c,#3a4670)}
+  .psec:first-child{margin-top:4px}
+  .phead{display:flex; align-items:baseline; gap:8px; margin-bottom:4px; flex-wrap:wrap}
+  .pidx{font-size:11px; color:var(--c); font-weight:700; letter-spacing:.5px}
+  .pzh{font-size:12.5px; font-weight:700; color:var(--c); letter-spacing:.3px}
+  .pen{
+    font-family:ui-monospace,Consolas,monospace; font-size:11px; color:#5f6b8c;
+    letter-spacing:.2px;
+  }
+  .pbody{font-size:13.5px; line-height:1.75; color:#c2cbe4; word-break:break-word}
+
+  /* 行内高亮 */
+  .tk{
+    font-family:ui-monospace,Consolas,monospace; font-size:12.5px;
+    background:rgba(108,140,255,.16); border:1px solid rgba(108,140,255,.35);
+    color:#bcd0ff; border-radius:5px; padding:0 5px; white-space:nowrap;
+  }
+  .shot{
+    font-family:ui-monospace,Consolas,monospace; font-size:11.5px; font-weight:700;
+    background:rgba(46,204,143,.15); border:1px solid rgba(46,204,143,.4);
+    color:#7ef0bc; border-radius:5px; padding:0 6px; white-space:nowrap;
+  }
+  .mk{font-family:ui-monospace,Consolas,monospace; font-size:11.5px; font-weight:700;
+      border-radius:4px; padding:0 4px; white-space:nowrap}
+  .mk-fully_preserved   {background:rgba(46,204,143,.18); color:#7ef0bc; border:1px solid rgba(46,204,143,.45)}
+  .mk-partially_preserved{background:rgba(255,200,87,.18); color:#ffd98a; border:1px solid rgba(255,200,87,.45)}
+  .mk-attribute_transfer {background:rgba(108,140,255,.18); color:#a9c0ff; border:1px solid rgba(108,140,255,.45)}
+  .mk-weak_reference     {background:rgba(150,160,190,.16); color:#aab4cf; border:1px solid rgba(150,160,190,.4)}
+  .mk-fully_copy         {background:rgba(46,204,143,.18); color:#7ef0bc; border:1px solid rgba(46,204,143,.45)}
+  .mk-partially_copy     {background:rgba(255,200,87,.18); color:#ffd98a; border:1px solid rgba(255,200,87,.45)}
+  .mk-reference          {background:rgba(150,160,190,.16); color:#aab4cf; border:1px solid rgba(150,160,190,.4)}
+  .lead{color:#fff; font-weight:700}
+  .editbadge{
+    display:inline-block; font-size:11px; font-weight:700; letter-spacing:.4px;
+    background:rgba(201,140,255,.2); border:1px solid rgba(201,140,255,.5);
+    color:#dcc0ff; border-radius:5px; padding:0 6px; margin-right:6px;
+  }
+  .emph{color:#ffe9a8}
 
   /* 返修横幅 */
   .revise{
@@ -185,7 +224,8 @@
         <button class="ghost" id="copyPrompt">复制</button>
         <button class="ghost" id="togglePrompt">收起</button>
       </span>
-      <code id="prompt"></code>
+      <code id="prompt" hidden></code>
+      <div class="pwrap" id="promptView"></div>
     </div>
 
     <div class="stage">
@@ -379,6 +419,74 @@
     });
   }
 
+  /* ---------------- prompt 分区渲染 ---------------- */
+  const PSECTIONS = [
+    { key: 'subject_definitions',  zh: '主体定义', color: '#8ea3c8' },
+    { key: 'summary',              zh: '编辑摘要', color: '#6c8cff' },
+    { key: 'retention_analysis',   zh: '保留分析', color: '#b98cff' },
+    { key: 'detailed_description', zh: '详细描述', color: '#2ecc8f' },
+    { key: 'overall_soundscape',   zh: '环境声',   color: '#4fc3f7' },
+    { key: 'non_diegetic_music',   zh: '配乐',     color: '#96a0be' },
+  ];
+
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  function hl(escaped) {
+    let s = escaped;
+    // 1) 小标题式引导语加粗（先做，避免后续插入的标签被二次匹配）
+    s = s.replace(
+      /\b(The facial expression changes|The camera does not reframe|The lighting shifts|The color grade moves|The scene also gains|The air carries|The light is now|The shot begins|The shot opens|The light is|The grade is|The grade|Posture)\b/g,
+      m => `<span class="lead">${m}</span>`
+    );
+    // 2) 标签 <Subject 1> / <Video 1> / <Audio 1>
+    s = s.replace(/&lt;(Subject|Video|Audio|Picture)\s*(\d+)&gt;/g,
+      '<span class="tk">&lt;$1 $2&gt;</span>');
+    // 3) 镜头标记 [Shot N]
+    s = s.replace(/\[Shot\s*(\d+)\]/g, '<span class="shot">[Shot $1]</span>');
+    // 4) [video editing] 徽标
+    s = s.replace(/\[video editing\]/g, '<span class="editbadge">video editing</span>');
+    // 5) 保留 / 音频标记（长词优先）
+    s = s.replace(
+      /\b(fully_preserved|partially_preserved|attribute_transfer|weak_reference|fully_copy|partially_copy|reference)\b/g,
+      m => `<span class="mk mk-${m}">${m}</span>`
+    );
+    return s;
+  }
+
+  function secHtml(meta, body) {
+    const b = hl(esc(body)).replace(/\n/g, '<br>');
+    return `<div class="psec" style="--c:${meta.color}">
+      <div class="phead"><span class="pzh">${meta.zh}</span><span class="pen">${meta.key}:</span></div>
+      <div class="pbody">${b}</div>
+    </div>`;
+  }
+
+  function renderPrompt(text) {
+    if (!text || !text.trim()) {
+      return '<div class="pbody" style="color:#5f6b8c">（这条没有 prompt）</div>';
+    }
+    const re = new RegExp('(' + PSECTIONS.map(s => s.key).join('|') + ')\\s*:', 'g');
+    const marks = [];
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      marks.push({ key: m[1], start: m.index, end: re.lastIndex });
+    }
+    if (!marks.length) {
+      return '<div class="pbody">' + hl(esc(text)).replace(/\n/g, '<br>') + '</div>';
+    }
+    const out = [];
+    if (marks[0].start > 0) {
+      const pre = text.slice(0, marks[0].start).trim();
+      if (pre) out.push(secHtml(PSECTIONS[0], pre));
+    }
+    marks.forEach((mk, i) => {
+      const body = text.slice(mk.end, i + 1 < marks.length ? marks[i + 1].start : text.length).trim();
+      const meta = PSECTIONS.find(s => s.key === mk.key) || { key: mk.key, zh: mk.key, color: '#96a0be' };
+      out.push(secHtml(meta, body));
+    });
+    return out.join('');
+  }
+
   /* ---------------- 渲染 ---------------- */
   function resetDims() {
     state.dims = {};
@@ -408,7 +516,9 @@
     if (item.duration) chips.push(`<span class="chip dim">${item.duration}s</span>`);
     $('meta').innerHTML = chips.join('');
 
-    $('prompt').textContent = item.prompt || '（无）';
+    state.rawPrompt = item.prompt || '';
+    $('prompt').textContent = state.rawPrompt;
+    $('promptView').innerHTML = renderPrompt(state.rawPrompt);
     $('oid').textContent = item.origin_id;
     $('sid').textContent = '#' + item.id;
     $('targetEmo').textContent = `${item.emoji} ${item.emo_zh}`;
@@ -606,7 +716,7 @@
     $('togglePrompt').textContent = box.classList.contains('mini') ? '展开' : '收起';
   };
   $('copyPrompt').onclick = async () => {
-    const txt = $('prompt').textContent || '';
+    const txt = state.rawPrompt || $('prompt').textContent || '';
     try {
       await navigator.clipboard.writeText(txt);
       toast('prompt 已复制', 1200);
