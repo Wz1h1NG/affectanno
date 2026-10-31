@@ -427,7 +427,9 @@ export default {
         SELECT i.id,i.subset,i.emotion,i.intensity,i.trans_from,i.origin_id,i.prompt,
                i.origin_asset,i.edited_asset,
                l.annotator,l.verdict,l.emo_clarity,l.intensity_fit,l.identity_keep,
-               l.comp_keep,l.audio_keep,l.trans_smooth,l.new_prompt,l.note,l.ms,l.created_at
+               l.comp_keep,l.audio_keep,l.trans_smooth,l.new_prompt,l.note,l.ms,l.created_at,
+               CASE WHEN l.emo_clarity IS NOT NULL AND l.identity_keep IS NOT NULL
+                          AND l.comp_keep IS NOT NULL THEN 1 ELSE 0 END AS dims_complete
         FROM labels l JOIN items i ON i.id=l.item_id ORDER BY i.id`).all()).results || [];
       const esc = (v) => {
         const s = v === null || v === undefined ? "" : String(v);
@@ -438,8 +440,8 @@ export default {
         .toISOString().replace("T", " ").slice(0, 19);
       const head = ["item_id", "subset", "emotion", "intensity", "trans_from", "origin_id",
         "origin_prompt", "verdict", "emo_clarity", "intensity_fit", "identity_keep",
-        "comp_keep", "audio_keep", "trans_smooth", "new_prompt", "note", "annotator",
-        "seconds", "created_at", "origin_path", "edited_path"];
+        "comp_keep", "audio_keep", "trans_smooth", "dims_complete", "new_prompt", "note",
+        "annotator", "seconds", "created_at", "origin_path", "edited_path"];
       const lines = [head.join(",")];
       for (const r of rows) {
         lines.push([
@@ -447,6 +449,7 @@ export default {
           r.verdict === "ok" ? "正确" : "不正确",
           r.emo_clarity ?? "", r.intensity_fit || "", r.identity_keep ?? "",
           r.comp_keep ?? "", r.audio_keep || "", r.trans_smooth || "",
+          r.dims_complete ?? "",
           r.new_prompt || "", r.note || "", r.annotator,
           ((r.ms || 0) / 1000).toFixed(1),
           bjTime(r.created_at),

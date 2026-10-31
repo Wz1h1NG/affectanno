@@ -153,6 +153,7 @@
   .dims{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:6px 14px 12px}
   .row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:9px 0; border-bottom:1px dashed #232c46}
   .row:last-child{border-bottom:0}
+  .row.miss{background:rgba(255,107,129,.08); box-shadow:inset 3px 0 0 var(--bad)}
   .row>.lab{width:170px; font-size:13.5px; color:#c3cbe2; flex:0 0 auto}
   .row>.lab i{display:block; font-style:normal; font-size:11.5px; color:#6b7694}
   .seg{display:flex; gap:6px; flex-wrap:wrap}
@@ -308,7 +309,7 @@
     </div>
 
     <div class="actions">
-      <button class="btn ok" id="btnOk">✅ 表达正确 <span class="k">1</span></button>
+      <button class="btn ok" id="btnOk">✅ 表达正确，下一条 <span class="k">1</span></button>
       <button class="btn bad" id="btnBad">❌ 不正确，需改 prompt <span class="k">2</span></button>
     </div>
 
@@ -325,8 +326,8 @@
 
     <footer>
       <span><kbd>Space</kbd> 播放/暂停</span>
-      <span><kbd>1</kbd> 正确</span>
-      <span><kbd>2</kbd> 不正确</span>
+      <span><kbd>1</kbd> 正确（立即提交）</span>
+      <span><kbd>2</kbd> 不正确（需改 prompt）</span>
       <span><kbd>Enter</kbd> 提交</span>
       <span><kbd>S</kbd> 跳过</span>
       <span><kbd>B</kbd> 修改上一条</span>
@@ -346,7 +347,7 @@
 <script>
 (() => {
   const $ = id => document.getElementById(id);
-  const state = {item: null, started: 0, mode: null, stats: null, dims: {}, revising: false, backOffset: 0, backTotal: 0, lang: 'zh', rawPrompt: '', rawPromptZh: ''};
+  const state = {item: null, started: 0, mode: null, stats: null, dims: {}, revising: false, backOffset: 0, backTotal: 0, lang: 'zh', rawPrompt: '', rawPromptZh: '', submitting: false};
   let me = '';
 
   const api = async (url, opt) => {
@@ -521,6 +522,8 @@
     $('promptbox').classList.remove('mini');
     $('togglePrompt').textContent = '收起';
     resetDims();
+    // 回到顶部：否则视线停在下方的评分区，会以为没有跳到下一条
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { window.scrollTo(0, 0); }
 
     const chips = [
       `<span class="chip emo">${item.emoji} ${item.emotion}</span>`,
@@ -657,6 +660,17 @@
   function missingDims() {
     return REQUIRED.filter(([k]) => !(k in state.dims)).map(([, zh]) => zh);
   }
+  // 把没打分的行圈出来（仅视觉提示，不阻止提交）
+  function flagMissingDims(miss) {
+    document.querySelectorAll('.row.miss').forEach(r => r.classList.remove('miss'));
+    const keys = REQUIRED.filter(([, zh]) => miss.includes(zh)).map(([k]) => k);
+    keys.forEach(k => {
+      const seg = document.querySelector(`.seg[data-k="${k}"]`);
+      if (!seg) return;
+      const row = seg.closest('.row');
+      if (row) row.classList.add('miss');
+    });
+  }
 
   function setMode(mode) {
     if (!state.item) return;
@@ -674,9 +688,22 @@
   }
 
   async function submit(verdict) {
-    if (!state.item) return;
+    if (!state.item || state.submitting) return;
+
+    // 先做会中断提交的校验，避免 submitting 卡死
+    if (verdict === 'bad' && !$('newPrompt').value.trim()) {
+      toast('标为不正确时，请先写出新的 prompt'); $('newPrompt').focus(); return;
+    }
+    if (verdict === 'bad' && $('newPrompt').value.trim() === (state.item.prompt || '').trim()) {
+      if (!confirm('新 prompt 和原来的一样，收集到的内容和原始 prompt 没区别。确定要这样提交吗？')) {
+        $('newPrompt').focus(); return;
+      }
+    }
+
+    state.submitting = true;
+    // 维度没填完不拦提交（避免"点了不跳转"），只把缺的行圈出来；导出里可筛出未打分行
     const miss = missingDims();
-    if (miss.length) { toast('请先选择：' + miss.join('、'), 2400); return; }
+    if (miss.length) flagMissingDims(miss);
 
     const payload = {
       item_id: state.item.id,
@@ -691,12 +718,6 @@
       audio_keep: state.dims.audio_keep || null,
       trans_smooth: state.dims.trans_smooth || null,
     };
-    if (verdict === 'bad' && !payload.new_prompt) { toast('请先写出新的 prompt'); $('newPrompt').focus(); return; }
-    if (verdict === 'bad' && payload.new_prompt === (state.item.prompt || '').trim()) {
-      if (!confirm('新 prompt 和原来的一样，收集到的内容和原始 prompt 没区别。确定要这样提交吗？')) {
-        $('newPrompt').focus(); return;
-      }
-    }
     $('btnSubmit').disabled = true;
     setMode(verdict);
     try {
@@ -705,12 +726,15 @@
       });
       paintStats(d.stats);
       const wasRevising = state.revising;
-      toast(wasRevising ? '已覆盖更新这条标注' : (verdict === 'ok' ? '已记录：正确' : '已记录：不正确 + 新 prompt'), 1100);
+      if (wasRevising) toast('已覆盖更新这条标注', 1100);
+      else if (miss.length) toast(`已记录（未打分：${miss.join('、')}）`, 1600);
+      else toast(verdict === 'ok' ? '已记录：正确' : '已记录：不正确 + 新 prompt', 1000);
       await loadNext();
     } catch (ex) {
       if (String(ex.message).includes('已由')) { toast(ex.message, 2200); await loadNext(); }
       else toast('提交失败：' + ex.message, 2600);
     } finally {
+      state.submitting = false;
       $('btnSubmit').disabled = false;
     }
   }
@@ -727,9 +751,9 @@
     } catch (ex) { toast('跳过失败：' + ex.message); }
   }
 
-  $('btnOk').onclick = () => setMode('ok');
+  $('btnOk').onclick = () => submit('ok');
   $('btnBad').onclick = () => setMode('bad');
-  $('btnSubmit').onclick = () => submit('bad');
+  $('btnSubmit').onclick = () => submit(state.item && $('fix').classList.contains('show') ? 'bad' : 'ok');
 
   /* ---- prompt 语言切换 ---- */
   function applyLang(lang) {
@@ -789,12 +813,12 @@
       return;
     }
     if (ev.code === 'Space') { ev.preventDefault(); togglePlay(); return; }
-    if (ev.key === '1') { setMode('ok'); }
+    if (ev.key === '1') { submit('ok'); }
     else if (ev.key === '2') { setMode('bad'); }
     else if (ev.key === 'Enter') {
-      if (state.mode === 'bad') submit('bad');
+      if ($('fix').classList.contains('show')) submit('bad');
       else if (state.mode === 'ok') submit('ok');
-      else { toast('先按 1 或 2 选择结论', 1600); }
+      else { toast('按 1 判为正确，按 2 判为不正确', 1600); }
     }
     else if (ev.key === 's' || ev.key === 'S') skip();
     else if (ev.key === 'b' || ev.key === 'B') { loadLast(0).catch(() => {}); }
